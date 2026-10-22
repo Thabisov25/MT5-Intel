@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mt5-intel"
+version = "0.1.0"
+description = "MT5 diagnostics and research console for the trading intelligence project. Read-only unless auto-trading is explicitly armed."
+requires-python = ">=3.11"
+dependencies = [
+    "MetaTrader5>=5.0.5000; sys_platform == 'win32'",
+    "numpy>=1.26",
+    "python-dotenv>=1.0",
+    # Windows ships no IANA time-zone database, and the trading sessions are defined on
+    # Tokyo/London/New York local clocks (D-011); zoneinfo reads its data from here.
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.mypy]
+mypy_path = "src"
+files = ["src", "tests"]
+strict = true
+
+# MetaTrader5 ships no type stubs or py.typed marker, so it is treated as Any at the boundary.
+[[tool.mypy.overrides]]
+module = ["MetaTrader5"]
+ignore_missing_imports = true

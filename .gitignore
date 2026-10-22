@@ -1,0 +1,31 @@
+.env
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+reports/
+data/
+logs/
+dashboard/gate-history.json
+dashboard/trades.json
+# Auto-trading state: the view the watcher writes and the two files the dashboard writes.
+dashboard/auto.json
+dashboard/auto-switch.json
+dashboard/auto-strategies.json
+# Per-symbol copies of the auto view and the live-snapshot scratch files.
+dashboard/auto_*.json
+dashboard/.h1.json
+dashboard/.m15.json
+dashboard/.m30.json
+# The live per-strategy view the watcher rewrites on its own timer.
+dashboard/setups*.json
+# The watcher's loop-status heartbeat.
+dashboard/live-status.json
+*.lnk
+
+# Dev-server artifacts.
+.next-dev*.log
+.next-dev*.pid
+.next/
