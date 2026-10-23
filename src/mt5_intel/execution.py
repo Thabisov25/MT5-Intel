@@ -46,15 +46,29 @@ Four more rules keep an armed switch from becoming an unattended liability — a
 * **The broker holds the exits.** The card's own stop and target are attached to the order, so MT5
   closes the trade even if this process is not running. The watcher adds only the card's own time
   limit on top.
+* **The position cap is the account holder's, and it can special-case a market.**
+  ``AUTO_TRADE_MAX_POSITIONS`` in the .env is the account-wide budget the engine counts its own
+  (magic-tagged) positions against, and the dashboard may override it per symbol with a
+  ``auto-caps.json`` file it writes (same pattern as the selection: read every cycle, validated
+  and clamped at both ends, missing file reads as no override). The effective cap is what the
+  gate's ``POSITION_LIMIT`` and the entry budget both decline by, and the artifact always says
+  which of the two numbers was in force.
 * **The terminal has to be allowed to trade.** MT5 refuses every request with retcode 10027 while
   its Algo Trading button is off, so that is checked before anything is sent - the refusal names
   the button instead of leaving the broker to look like the one that said no.
+* **A price worth sending is a price worth reading twice.** Two refusals used to cost a signal its
+  whole bar, because a refused reservation is spent: retcode 10021 ("No prices") at 04:21 took two
+  USDJPY cards that the very next cycles could have filled. So the entry path now reads the
+  terminal's *own price timestamp* before reserving - a stale tick refuses locally, unspent, and
+  the next cycle tries again - and a 10021 that still arrives at the broker is asked once more with
+  a freshly read price, because that refusal executed nothing and is the same intent again.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -117,6 +131,16 @@ SELECTION_FILENAME = "auto-strategies.json"
 MAX_SELECTED_NAMES = 32
 MAX_STRATEGY_NAME_CHARS = 40
 
+# The dashboard's per-symbol position caps: how many positions the engine may hold on one market,
+# written there and re-read every cycle like the switch and the selection. A symbol the map does
+# not name trades under the account's own cap (`settings.auto_max_positions`), and a file with no
+# named symbol changes nothing - so this file can only ever special-case a market, never widen the
+# default. `CAP_MAX` bounds every value: a typo'd large number is not a risk decision anyone made.
+CAPS_FILENAME = "auto-caps.json"
+MAX_CAP_ENTRIES = 32
+CAP_MIN = 0
+CAP_MAX = 9
+
 # A card is entered while it is still fresh. The watcher polls every 30 s and the setups artifact
 # is rebuilt every 5 minutes, while the bars are hourly, so a card that just appeared is normally
 # 0 bars old; 1 is the slack for a cycle that was missed, and past that the entry has gone.
@@ -142,6 +166,21 @@ MAX_SETUPS_AGE_S = 900
 TRADE_RETCODE_INVALID_FILL = 10030
 TRADE_RETCODE_DONE = 10009
 TRADE_RETCODE_PLACED = 10008
+# "No prices": the server had nothing to quote this request against - a feed gap at the broker, a
+# symbol momentarily without a stream. Nothing is executed by it (like the 10030 above), so the
+# same intent is sent once more with a freshly read price rather than spending the signal on a
+# moment the market was not there for. Bounded: a feed that is still down fails again, and the
+# reservation settles rejected exactly as before.
+TRADE_RETCODE_NO_PRICES = 10021
+NO_PRICE_RETRIES = 2
+NO_PRICE_RETRY_DELAY_S = 1.0
+# How old the terminal's own price may be before this side refuses to send on it. The bar can be
+# fresh while the tick feed is not (bars come from history), and an order priced from a stale tick
+# is exactly what the server answers 10021 to - so the age is checked *before* the reservation,
+# where refusing costs nothing: no row is spent, and the next cycle reads the signal again. The
+# watcher polls every 30 s and these markets tick continuously while open, so a minute-old price
+# means the stream stopped, not that the market is quiet.
+TICK_MAX_AGE_S = 60
 
 # How many of the broker's own refusals travel with the auto-trading view. A refused reservation is
 # spent and never retried, so the cycle that saw it is the last one that can report it; this is what
@@ -229,6 +268,65 @@ def read_switch(path: Path, *, master: bool) -> Switch:
         reason="Armed: the .env master is on and the dashboard switch is on.",
         updated_utc=updated,
     )
+
+
+# --- how much may be held, and where that came from ---------------------------------------
+
+
+@dataclass(frozen=True)
+class Caps:
+    """The per-symbol cap map, as the dashboard's file carried it.
+
+    `symbols` holds only the markets that were named and bounded; `default` is the file's own
+    replacement for the .env cap, when it names one. Both are empty/None on a missing, unreadable
+    or malformed file, which reads as "nothing was overridden here" - the same direction the
+    switch and the selection read, so a dashboardside write can only ever tighten or special-case,
+    never silently loosen the .env.
+    """
+
+    default: int | None
+    symbols: dict[str, int]
+
+    def effective_for(self, symbol: str) -> int | None:
+        """The cap this symbol's cycle is judged against, or None to inherit the .env's."""
+        if symbol in self.symbols:
+            return self.symbols[symbol]
+        return self.default
+
+
+def read_caps(path: Path | None) -> Caps:
+    """Read the per-symbol position caps, tolerating everything the dashboard could put there.
+
+    The file is another process's pen, so every value is verified and clamped: a bool (which
+    `int(True)` would happily make into a cap of one) is refused, a number outside the settled
+    span is refused, an unknown name is refused, and more than the bound of entries are dropped
+    past the bound. A file that says nothing valid reads as the empty map - which is the no-override
+    reading, not cap-zero, because "unreadable" must never tighten silently either.
+    """
+    if path is None:
+        return Caps(default=None, symbols={})
+    try:
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = None
+    if not isinstance(raw, dict):
+        return Caps(default=None, symbols={})
+
+    def bounded(value: Any) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        number = int(value)
+        return number if CAP_MIN <= number <= CAP_MAX else None
+
+    names = raw.get("caps")
+    symbols: dict[str, int] = {}
+    if isinstance(names, dict):
+        for key, value in list(names.items())[:MAX_CAP_ENTRIES]:
+            name = str(key).strip().upper()
+            number = bounded(value)
+            if name and len(name) <= MAX_STRATEGY_NAME_CHARS and number is not None:
+                symbols[name] = number
+    return Caps(default=bounded(raw.get("default")), symbols=symbols)
 
 
 # --- what to trade, and who chose it ------------------------------------------------------
@@ -834,8 +932,18 @@ class MT5Trader:
     magic number themselves.
     """
 
-    def __init__(self, backend: Any) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        *,
+        no_price_retries: int = NO_PRICE_RETRIES,
+        retry_delay_s: float = NO_PRICE_RETRY_DELAY_S,
+    ) -> None:
         self.__backend = backend
+        # Injectable so the bounded no-price retry can be tested without sleeping; the watcher
+        # uses the defaults, and a delay only ever applies after a 10021, never on the happy path.
+        self.__no_price_retries = max(0, int(no_price_retries))
+        self.__retry_delay_s = max(0.0, float(retry_delay_s))
 
     def account_info(self) -> Any:
         return self.__backend.account_info()
@@ -930,7 +1038,27 @@ class MT5Trader:
             "comment": comment,
             "type_time": self.__backend.ORDER_TIME_GTC,
         }
-        return self.__send_filling(request, symbol)
+        result = self.__send_filling(request, symbol)
+        # A 10021 executed nothing: the server had no price to fill against. Re-reading the tick
+        # and sending the same request at the new price is therefore the same intent tried again,
+        # not a second order - the discipline the 10030 walk above already follows. Only this
+        # retcode retries: an Invalid stops (10016) would answer identically forever, and a raised
+        # error is an *uncertain* outcome where a resend could double a position that did fill.
+        attempts = 0
+        while (
+            not result.ok
+            and result.retcode == TRADE_RETCODE_NO_PRICES
+            and attempts < self.__no_price_retries
+        ):
+            if self.__retry_delay_s:
+                time.sleep(self.__retry_delay_s)
+            fresh = self.symbol_info_tick(symbol)
+            if fresh is None:
+                break  # no price to re-send with: report the broker's own refusal as it came
+            request["price"] = float(fresh.ask if is_buy else fresh.bid)
+            result = self.__send_filling(request, symbol)
+            attempts += 1
+        return result
     def modified(self, position: Any, *, sl: float, tp: float) -> OrderResult:
         """Move a position's protective stops in place, keeping the same ticket.
 
@@ -1026,7 +1154,14 @@ class MT5Trader:
 # --- the cycle ---------------------------------------------------------------------------
 
 
-def card_gate(market: dict[str, Any], *, symbol: str, strategy_validated: str | None, risk_fits: bool | None) -> Any:
+def card_gate(
+    market: dict[str, Any],
+    *,
+    symbol: str,
+    strategy_validated: str | None,
+    risk_fits: bool | None,
+    max_positions: int = 2,
+) -> Any:
     """The full gate, with this card's own strategy and sizing filled in.
 
     The cycle's gate runs once for the market and can only say whether the *session* is sane; a
@@ -1045,6 +1180,9 @@ def card_gate(market: dict[str, Any], *, symbol: str, strategy_validated: str | 
             circuit_breaker_tripped=bool(market.get("circuit_breaker_tripped", True)),
             daily_loss_pct=market.get("daily_loss_pct"),
             open_positions=market.get("open_positions"),
+            # This symbol's own cap, passed by the caller so a per-symbol override judges the gate
+            # by the same number the entry budget below already declined by.
+            max_positions=max_positions,
             validated_strategy=strategy_validated,
             risk_fits=risk_fits,
         )
@@ -1057,12 +1195,19 @@ class Outcome:
 
     switch: Switch | None = None
     selection: Selection | None = None
+    # The per-symbol cap map this cycle read, kept whole so the artifact can show what the file
+    # said, not just the number that ended up applying.
+    caps: Caps | None = None
     terminal: dict[str, Any] = field(default_factory=dict)
     registry: list[dict[str, Any]] = field(default_factory=list)
     account: dict[str, Any] = field(default_factory=dict)
     allow: dict[str, Any] = field(default_factory=dict)
     placed: list[dict[str, Any]] = field(default_factory=list)
     refused: list[dict[str, Any]] = field(default_factory=list)
+    # Cards refused because even the broker's minimum lot outran the risk budget. Counted, not
+    # only listed, because the pattern - several cards, one account - is the finding: the deposit
+    # is small against the strategies' stops, and the per-row reasons all say it differently.
+    budget_refusals: int = 0
     closed: list[dict[str, Any]] = field(default_factory=list)
     managed: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -1401,6 +1546,7 @@ def run(
     max_hold_bars: int,
     validated: set[str],
     selection_path: Path | None = None,
+    caps_file: Path | None = None,
     registry: list[dict[str, Any]] | None = None,
     symbol: str = "",
 ) -> Outcome:
@@ -1423,6 +1569,17 @@ def run(
     """
     symbol = symbol or settings.symbol_root
     outcome = Outcome()
+    # The cap this cycle is judged against. The caps file names the override for *this* symbol
+    # (or a file-wide replacement for the account's own); a symbol it does not name, or a missing
+    # or unreadable file, means the .env's `AUTO_TRADE_MAX_POSITIONS` stands - the same reading
+    # direction the switch and the selection keep, so the dashboard can only ever special-case a
+    # market, never silently widen the account's own budget.
+    caps = read_caps(caps_file)
+    outcome.caps = caps
+    override = caps.effective_for(symbol)
+    cap = settings.auto_max_positions if override is None else override
+    outcome.allow["caps_file_found"] = caps_file is not None and caps_file.exists()
+    outcome.allow["caps_override"] = override
     outcome.registry = list(registry or [])
     outcome.switch = read_switch(switch_path, master=settings.auto_trade)
     # Read before any early return, so a switch that is armed but has had every entry refused still
@@ -1458,7 +1615,12 @@ def run(
         "refused": refused_names,
         "selection": selection.as_dict(),
         "unvalidated": unvalidated_in_use,
-        "max_positions": settings.auto_max_positions,
+        # The cap in force for this symbol's cycle - which is only the account's own when the
+        # caps file names no override for it - and the account's own beside it, so a view of one
+        # never reads as if it were the other.
+        "max_positions": cap,
+        "global_max_positions": settings.auto_max_positions,
+        "caps_override": override,
         "risk_pct": settings.auto_risk_pct,
         "magic": settings.auto_magic,
     }
@@ -1629,11 +1791,11 @@ def run(
             trader, store, settings, positions, still_open, candidates, symbol, outcome
         )
 
-    budget = max(0, int(settings.auto_max_positions) - len(still_open))
+    budget = max(0, int(cap) - len(still_open))
     outcome.open_rows = still_open
     if budget == 0:
         outcome.notes.append(
-            f"{len(still_open)} auto position(s) open, at the configured cap of {settings.auto_max_positions}."
+            f"{len(still_open)} auto position(s) open, at the configured cap of {cap}."
         )
 
     for card in candidates:
@@ -1790,6 +1952,11 @@ def run(
             continue  # already traded this signal here; re-firing or a restart must not double it
         sizing = _size(trader, settings, spec, equity, card)
         if not sizing.fits:
+            # The one self-inflicted refusal is the budget's own: the smallest possible position
+            # risks more than the budget allows. Counted separately so the cycle can say, once,
+            # what several identical per-strategy refusals add up to (see below the card loop).
+            if "risks more than" in (sizing.reason or ""):
+                outcome.budget_refusals += 1
             store.append_event(
                 "auto_refused",
                 {
@@ -1819,6 +1986,9 @@ def run(
             # Reached only when sizing fitted: a card that does not fit is refused above, where the
             # reason can name the risk budget, rather than being reported as a gate blocker.
             risk_fits=sizing.fits,
+            # This symbol's own cap - the gate's POSITION_LIMIT is the same number the budget
+            # above declined by, so the two answers can never disagree.
+            max_positions=cap,
         )
         if gate.verdict != PASS:
             store.append_event(
@@ -1836,7 +2006,12 @@ def run(
                 signal_utc=card.signal_utc,
             )
             continue
-        ok, why = _fresh(trader, card, symbol)
+        ok, why = _fresh(
+            trader,
+            card,
+            symbol,
+            server_now_epoch=(now_epoch + offset_s) if offset_s is not None else None,
+        )
         if not ok:
             store.append_event(
                 "auto_refused",
@@ -1946,6 +2121,19 @@ def run(
         else:
             outcome.refused.append({**row, "reason": f"the broker refused it: {result.comment}"})
 
+    # One summary note for the whole pattern: when cards are refused for budget alone, the reason
+    # is the account, not the signals - the deposit is small against the strategies' stops (or the
+    # budget is stricter than the account supports). Named once here, before the reader has to
+    # line up a wall of identical per-strategy reasons in the refused list to see it.
+    if outcome.budget_refusals:
+        outcome.notes.append(
+            f"Budget violation: {outcome.budget_refusals} candidate trade"
+            f"{'s were' if outcome.budget_refusals != 1 else ' was'} refused because the smallest"
+            f" possible lot risks more than the {settings.auto_risk_pct:g}% budget allows - the"
+            " account is too small (relative to its stop distances) for these signals to trade."
+            " Fund the account or raise the risk budget."
+        )
+
     outcome.open_rows = still_open
     return outcome
 
@@ -1988,16 +2176,39 @@ def _size(trader: MT5Trader, settings: Settings, spec: Any, equity: float | None
     )
 
 
-def _fresh(trader: MT5Trader, card: Card, symbol: str) -> tuple[bool, str | None]:
+def _fresh(
+    trader: MT5Trader,
+    card: Card,
+    symbol: str,
+    *,
+    server_now_epoch: int | None = None,
+) -> tuple[bool, str | None]:
     """Is the price still at the entry the card planned, or has the move already happened?
 
     A card is fresh by construction (`MAX_ENTRY_LAG_BARS`), but between the signal bar's open and
     the moment this cycle sees it the price can have run. Entering there is the late entry that
     makes a working strategy look broken, so it is skipped and named instead.
+
+    The terminal's own price timestamp is checked too, and it is the layer that saved two USDJPY
+    signals from being spent on a 10021: the bars come from history and stay fresh while the tick
+    stream is down, so `bar_age_s` alone cannot see a dead feed - but `tick.time` can. Refusing
+    here costs the signal nothing (no reservation is made), so the next cycle reads it again;
+    sending on would settle the reservation `rejected`, which is spent forever. `server_now_epoch`
+    is the caller's UTC clock shifted by the broker offset, because `tick.time` is server time;
+    without that offset the age is uncomputable, and an uncomputable age is not evidence of a
+    stale feed - the 10021 retry below is what guards the send in that case.
     """
     tick = trader.symbol_info_tick(symbol)
     if tick is None:
         return False, "the terminal returned no tick"
+    stamp = getattr(tick, "time", None)
+    if server_now_epoch is not None and isinstance(stamp, (int, float)):
+        age = int(server_now_epoch - int(stamp))
+        if age > TICK_MAX_AGE_S:
+            return False, (
+                f"the terminal's last price is {age}s old - the feed has no prices to trade "
+                "against; the signal is kept for the next cycle"
+            )
     market_price = float(tick.ask if card.side == "buy" else tick.bid)
     slip = (market_price - card.entry) if card.side == "buy" else (card.entry - market_price)
     if slip > MAX_ENTRY_SLIP_R * card.stop_distance:
@@ -2037,6 +2248,7 @@ def artifact(
             "open": outcome.open_rows,
             "placed": outcome.placed,
             "refused": outcome.refused,
+            "budget_refusals": outcome.budget_refusals,
             "closed": outcome.closed,
             "managed": outcome.managed,
             "errors": outcome.errors,
@@ -2068,6 +2280,7 @@ def artifact(
         "open": outcome.open_rows,
         "placed": outcome.placed,
         "refused": outcome.refused,
+        "budget_refusals": outcome.budget_refusals,
         "rejected": outcome.rejected,
         "closed": outcome.closed,
         "managed": outcome.managed,
@@ -2087,6 +2300,11 @@ def artifact(
             "symbol": symbol,
             "risk_pct": settings.auto_risk_pct,
             "max_positions": settings.auto_max_positions,
+            # What the caps file named for this symbol, when it named one - versus `max_positions`,
+            # which stays the account's own budget: a single number is the one a diff between
+            # cycles reads, two is the answer to "is this a special case?".
+            "caps_override": (outcome.caps.effective_for(symbol) if outcome.caps else None),
+            "caps_symbols": (dict(outcome.caps.symbols) if outcome.caps else {}),
             "magic": settings.auto_magic,
         },
     }

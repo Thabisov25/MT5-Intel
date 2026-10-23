@@ -125,15 +125,22 @@ tell you which of the two was wrong - which is the question it exists to answer.
 ```powershell
 # 1. Write the three files to the terminal's MQL5\Files (the watcher also does this every 5 min)
 .\.venv\Scripts\python.exe -m mt5_intel.research.export_mt5 H1
+
+# 2. Install the indicator: copy it into the terminal's MQL5\Indicators, compile it there,
+#    and re-export the chart files (so one run leaves build and files in step)
+.\.venv\Scripts\python.exe -m mt5_intel.install_indicator
 ```
 
-2. In MT5: **Navigator** (Ctrl+N) → **Indicators** → `Mt5IntelSignals` → drag it onto a
+3. In MT5: **Navigator** (Ctrl+N) → **Indicators** → `Mt5IntelSignals` → drag it onto a
    **USDJPY H1** chart. If it is not listed yet, right-click the Indicators tree → *Refresh*.
-   On this PC it is already copied into the terminal's `MQL5\Indicators` and compiled. On another
-   machine: copy [Mt5IntelSignals.mq5](tools/mt5/Mt5IntelSignals.mq5) there and press F7 in
-   MetaEditor (or `MetaEditor64.exe /compile:"<path>"`), then restart MT5.
+   The install command above is how the terminal's copy stays in step with
+   [Mt5IntelSignals.mq5](tools/mt5/Mt5IntelSignals.mq5) - it copies, compiles and re-exports the
+   chart files (`--no-export` installs the build only). By hand the install is the same two moves
+   it makes for you - copy the file into `MQL5\Indicators`, press F7 in MetaEditor
+   (`MetaEditor64.exe /compile:"<path>"`), then restart MT5.
    **After updating the indicator you have to restart MT5** (or remove and re-attach it); the
    running terminal keeps the build it loaded, so the files can be new while the chart is old.
+   The chart says which build it runs: the key's title line prints the indicator's version.
 
 ### What is on the chart
 

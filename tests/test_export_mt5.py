@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -206,6 +207,9 @@ def test_csv_round_trips_with_the_header_the_indicator_expects(tmp_path: Path) -
     path = tmp_path / "mt5intel_M15.csv"
     export_mt5.write_csv(rows, path)
     with path.open(encoding="utf-8", newline="") as handle:
+        # The completeness stamp opens the file; the header the indicator reads by position
+        # follows it. Both have to be where the two readers expect them.
+        assert handle.readline().strip() == f"#rows,{len(rows)},{len(rows)}"
         reader = csv.DictReader(handle)
         assert reader.fieldnames == list(export_mt5.HEADER)
         assert len(export_mt5.HEADER) == 12  # 11 the indicator requires, plus the agreement
@@ -298,13 +302,16 @@ def test_export_writes_all_three_files_side_by_side(tmp_path: Path) -> None:
         "mt5intel_USDJPY_H1_lines.csv",
     ]
     with (folder / "mt5intel_USDJPY_H1_lines.csv").open(encoding="utf-8", newline="") as handle:
+        assert handle.readline().strip() == "#rows,120,120"  # the stamp names the row count
         parsed = list(csv.DictReader(handle))
     assert list(parsed[0]) == list(export_mt5.LINES_HEADER)
     assert len(parsed) == 120
     with (folder / "mt5intel_USDJPY_H1_context.csv").open(encoding="utf-8", newline="") as handle:
         ctx_rows = list(csv.reader(handle))
-    assert ctx_rows[0] == ["key", "value"]
-    assert all(len(row) == 2 for row in ctx_rows[1:])
+    # The stamp first, then the header, then one key,value pair per row.
+    assert ctx_rows[0] == ["#rows", str(len(ctx_rows) - 2), str(len(ctx_rows) - 2)]
+    assert ctx_rows[1] == ["key", "value"]
+    assert all(len(row) == 2 for row in ctx_rows[2:])
 
 
 def test_the_indicator_derives_the_same_file_names() -> None:
@@ -331,6 +338,20 @@ def test_the_indicator_derives_the_same_file_names() -> None:
         + "_lines.csv"  # the same base the indicator's SiblingName builds from FileName()
     )
     assert export_mt5.context_filename("H1", "EURUSD") == "mt5intel_EURUSD_H1_context.csv"
+
+
+def test_the_panel_prints_the_same_version_the_property_declares() -> None:
+    """What answers "am I running the updated indicator": the key prints the build's version.
+
+    A stale compiled copy is otherwise invisible - "the fix did nothing" and "the old build is
+    still attached" look exactly the same on a chart - so the panel title carries the version
+    #property declares, and this pins the two together so they cannot drift apart.
+    """
+    source = Path(export_mt5.__file__).resolve().parents[3] / "tools" / "mt5"
+    text = (source / "Mt5IntelSignals.mq5").read_text(encoding="utf-8")
+    version = re.search(r'#property version\s+"([^"]+)"', text)
+    assert version is not None, "the indicator declares a version"
+    assert f'"MT5 intel - signals v{version.group(1)} (this indicator places no orders)"' in text
 
 
 def test_the_indicator_alerts_on_a_rule_that_exists() -> None:
@@ -427,12 +448,16 @@ def test_watcher_writes_the_chart_file_from_the_same_bars(
     ]
     csv_file = folder / "mt5intel_USDJPY_H1.csv"
     with csv_file.open(encoding="utf-8", newline="") as handle:
+        stamp = handle.readline().strip()
         parsed = list(csv.DictReader(handle))
     assert parsed
+    assert stamp == f"#rows,{len(parsed)},{len(parsed)}"
     assert set(parsed[0]) == set(export_mt5.HEADER)
     with (folder / "mt5intel_USDJPY_H1_lines.csv").open(encoding="utf-8", newline="") as handle:
+        handle.readline()  # the stamp
         assert len(list(csv.DictReader(handle))) == len(export_mt5.build_lines(bars))
     with (folder / "mt5intel_USDJPY_H1_context.csv").open(encoding="utf-8", newline="") as handle:
+        handle.readline()  # the stamp
         context_rows = dict(csv.reader(handle))
     assert context_rows["symbol"] == "USDJPY"
     assert context_rows["timeframe"] == "H1"
@@ -452,7 +477,9 @@ def test_watcher_writes_the_chart_file_from_the_same_bars(
         store,
         now + watch.CHART_EXPORT_S + 1,
     )
-    assert csv_file.read_text(encoding="utf-8").startswith("family,side,entry_time")
+    fresh = csv_file.read_text(encoding="utf-8").splitlines()
+    assert fresh[0].startswith("#rows,")                 # the stamp is on every write
+    assert fresh[1].startswith("family,side,entry_time")
 
 
 def _rows(*specs: tuple[str, str, str, str]) -> list[dict[str, Any]]:
@@ -521,6 +548,36 @@ def test_the_written_csv_carries_one_agreement_count_per_row(tmp_path: Path) -> 
     path = tmp_path / "mt5intel_M15.csv"
     export_mt5.write_csv(_all(make_bars()), path)
     with path.open(encoding="utf-8", newline="") as handle:
+        handle.readline()  # the stamp
         parsed = list(csv.DictReader(handle))
     assert parsed
     assert all(int(row["confluence"]) >= 1 for row in parsed)
+
+
+def test_a_half_written_file_claims_every_row_and_is_caught_by_it(tmp_path: Path) -> None:
+    """The read that lands inside a rewrite sees this: rows that parse, and a count that lies.
+
+    The chart used to draw that truncation as the export - a few old arrows where the newest
+    ones had been, a line cut short, a key counting half the rows - and flickered between two
+    half-reads of one export around every rewrite. The stamp on the first line is the reader's
+    way to tell: written twice so a stamp cut in half cannot agree with itself, and any file
+    whose count does not hold is dropped whole instead of drawn.
+    """
+    rows = _all(make_bars())
+    path = tmp_path / "mt5intel_M15.csv"
+    export_mt5.write_csv(rows, path)
+    text = path.read_text(encoding="utf-8")
+    assert text.splitlines()[0] == f"#rows,{len(rows)},{len(rows)}"
+
+    # Cut the file the way a mid-rewrite read sees it: the claim at the top survives intact,
+    # the rows below it do not - exactly the disagreement the indicator has to refuse.
+    cut = text[: len(text) // 2].splitlines()
+    claim = int(cut[0].split(",")[1])
+    present = len([line for line in cut[1:] if line and not line.startswith("family,")])
+    assert 0 < present < claim
+
+    # The two languages share the rule: what this writes, the indicator checks for.
+    source = Path(export_mt5.__file__).resolve().parents[3] / "tools" / "mt5"
+    mq5 = (source / "Mt5IntelSignals.mq5").read_text(encoding="utf-8")
+    assert '"#rows,"' in mq5, "the indicator looks for the stamp this writes"
+    assert "total != want" in mq5, "and refuses a file whose row count does not hold"

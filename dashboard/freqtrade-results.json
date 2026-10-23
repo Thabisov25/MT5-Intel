@@ -1,0 +1,502 @@
+{
+  "runs": {
+    "sweep_reclaim": {
+      "strategy": "SweepReclaimFT",
+      "timerange": "20250101-",
+      "trades": 214,
+      "wins": 89,
+      "losses": 125,
+      "win_rate": 0.4159,
+      "expectancy_r": -0.1247,
+      "net_profit_pct": -0.464,
+      "max_drawdown_pct": 0.8,
+      "buy_params": {
+        "atr_mult": 0.18,
+        "confirm_bars": 3,
+        "k": 7,
+        "stop_scale": 1.4,
+        "tp_r": 1.3
+      },
+      "generated_utc": "2026-10-23T18:52:25+00:00"
+    },
+    "trend_pullback": {
+      "strategy": "TrendPullbackFT",
+      "timerange": "20250101-",
+      "trades": 99,
+      "wins": 43,
+      "losses": 53,
+      "win_rate": 0.4479,
+      "expectancy_r": -0.1486,
+      "net_profit_pct": -0.584,
+      "max_drawdown_pct": 0.75,
+      "buy_params": {
+        "fast": 50,
+        "k_atr": 2.9,
+        "slow_gap": 160,
+        "stop_scale": 1.4,
+        "tp_r": 1.3
+      },
+      "generated_utc": "2026-10-23T18:31:56+00:00"
+    },
+    "carry_trend": {
+      "strategy": "CarryTrendFT",
+      "timerange": "20250101-",
+      "trades": 26,
+      "wins": 9,
+      "losses": 17,
+      "win_rate": 0.3462,
+      "expectancy_r": 1.4494,
+      "net_profit_pct": 0.558,
+      "max_drawdown_pct": 0.75,
+      "buy_params": {
+        "ma_days": 212,
+        "stop_atr": 7.7,
+        "stop_scale": 1.6,
+        "tp_r": 2.2
+      },
+      "generated_utc": "2026-10-23T16:32:24+00:00"
+    },
+    "compression_breakout": {
+      "strategy": "CompressionBreakoutFT",
+      "timerange": "20250101-",
+      "trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "win_rate": null,
+      "expectancy_r": null,
+      "net_profit_pct": 0.0,
+      "max_drawdown_pct": 0.0,
+      "buy_params": null,
+      "generated_utc": "2026-10-23T17:15:49+00:00"
+    },
+    "range_extreme_mr": {
+      "strategy": "RangeExtremeFT",
+      "timerange": "20250101-",
+      "trades": 111,
+      "wins": 35,
+      "losses": 76,
+      "win_rate": 0.3153,
+      "expectancy_r": 0.0502,
+      "net_profit_pct": 0.402,
+      "max_drawdown_pct": 0.35,
+      "buy_params": {
+        "hi_rsi": 64.4,
+        "lookback": 185,
+        "stop_scale": 1.6,
+        "tp_r": 2.2
+      },
+      "generated_utc": "2026-10-23T17:16:38+00:00"
+    },
+    "ma_crossover": {
+      "strategy": "MaCrossoverFT",
+      "timerange": "20250101-",
+      "trades": 68,
+      "wins": 18,
+      "losses": 50,
+      "win_rate": 0.2647,
+      "expectancy_r": 0.0003,
+      "net_profit_pct": 0.111,
+      "max_drawdown_pct": 0.11,
+      "buy_params": {
+        "buffer_atr": 0.56,
+        "fast": 48,
+        "kind": "sma",
+        "slow_gap": 36,
+        "stop_atr": 1.25,
+        "stop_scale": 0.58,
+        "tp_r": 2.8
+      },
+      "generated_utc": "2026-10-23T17:22:04+00:00"
+    },
+    "daily_momentum": {
+      "strategy": "DailyMomentumFT",
+      "timerange": "20250101-",
+      "trades": 41,
+      "wins": 12,
+      "losses": 29,
+      "win_rate": 0.2927,
+      "expectancy_r": 1.2079,
+      "net_profit_pct": 0.299,
+      "max_drawdown_pct": 0.68,
+      "buy_params": {
+        "lookback": 120,
+        "stop_atr": 4.9,
+        "stop_scale": 1.6,
+        "tp_r": 2.2
+      },
+      "generated_utc": "2026-10-23T17:22:55+00:00"
+    },
+    "rsi_mean_reversion": {
+      "strategy": "RsiMeanReversionFT",
+      "timerange": "20250101-",
+      "trades": 550,
+      "wins": 103,
+      "losses": 447,
+      "win_rate": 0.1873,
+      "expectancy_r": -0.2303,
+      "net_profit_pct": -0.949,
+      "max_drawdown_pct": 1.05,
+      "buy_params": {
+        "confirm_bars": 3,
+        "entry": "confirm",
+        "hi": 78.0,
+        "rsi_period": 4,
+        "stop_atr": 1.4,
+        "stop_scale": 0.58,
+        "tp_r": 2.8
+      },
+      "generated_utc": "2026-10-23T17:23:39+00:00"
+    }
+  },
+  "generated_utc": "2026-10-23T18:52:25+00:00",
+  "sweep": {
+    "train": "20250101-20260401",
+    "holdout": "20260401-",
+    "epochs": 30,
+    "families": [
+      {
+        "family": "carry_trend",
+        "strategy": "CarryTrendFT",
+        "in_sample": {
+          "strategy": "CarryTrendFT",
+          "timerange": "20250101-20260401",
+          "trades": 20,
+          "wins": 7,
+          "losses": 13,
+          "win_rate": 0.35,
+          "expectancy_r": 1.1368,
+          "net_profit_pct": 0.653,
+          "max_drawdown_pct": 0.56,
+          "buy_params": {
+            "ma_days": 212,
+            "stop_atr": 7.7,
+            "stop_scale": 1.6,
+            "tp_r": 2.2
+          },
+          "generated_utc": "2026-10-22T17:26:21+00:00"
+        },
+        "holdout": {
+          "strategy": "CarryTrendFT",
+          "timerange": "20260401-",
+          "trades": 7,
+          "wins": 1,
+          "losses": 6,
+          "win_rate": 0.1429,
+          "expectancy_r": -1.5646,
+          "net_profit_pct": -0.135,
+          "max_drawdown_pct": 0.27,
+          "buy_params": {
+            "ma_days": 212,
+            "stop_atr": 7.7,
+            "stop_scale": 1.6,
+            "tp_r": 2.2
+          },
+          "generated_utc": "2026-10-22T17:26:44+00:00"
+        },
+        "minutes": 8.1,
+        "ok": true
+      },
+      {
+        "family": "compression_breakout",
+        "strategy": "CompressionBreakoutFT",
+        "in_sample": {
+          "strategy": "CompressionBreakoutFT",
+          "timerange": "20250101-20260401",
+          "trades": 0,
+          "wins": 0,
+          "losses": 0,
+          "win_rate": null,
+          "expectancy_r": null,
+          "net_profit_pct": 0.0,
+          "max_drawdown_pct": 0.0,
+          "buy_params": null,
+          "generated_utc": "2026-10-22T17:27:18+00:00"
+        },
+        "holdout": {
+          "strategy": "CompressionBreakoutFT",
+          "timerange": "20260401-",
+          "trades": 0,
+          "wins": 0,
+          "losses": 0,
+          "win_rate": null,
+          "expectancy_r": null,
+          "net_profit_pct": 0.0,
+          "max_drawdown_pct": 0.0,
+          "buy_params": null,
+          "generated_utc": "2026-10-22T17:27:26+00:00"
+        },
+        "minutes": 0.7,
+        "ok": true
+      },
+      {
+        "family": "daily_momentum",
+        "strategy": "DailyMomentumFT",
+        "in_sample": {
+          "strategy": "DailyMomentumFT",
+          "timerange": "20250101-20260401",
+          "trades": 27,
+          "wins": 9,
+          "losses": 18,
+          "win_rate": 0.3333,
+          "expectancy_r": 1.5556,
+          "net_profit_pct": 0.488,
+          "max_drawdown_pct": 0.53,
+          "buy_params": {
+            "lookback": 120,
+            "stop_atr": 4.9,
+            "stop_scale": 1.6,
+            "tp_r": 2.2
+          },
+          "generated_utc": "2026-10-22T17:32:07+00:00"
+        },
+        "holdout": {
+          "strategy": "DailyMomentumFT",
+          "timerange": "20260401-",
+          "trades": 16,
+          "wins": 5,
+          "losses": 11,
+          "win_rate": 0.3125,
+          "expectancy_r": 0.6294,
+          "net_profit_pct": -0.151,
+          "max_drawdown_pct": 0.38,
+          "buy_params": {
+            "lookback": 120,
+            "stop_atr": 4.9,
+            "stop_scale": 1.6,
+            "tp_r": 2.2
+          },
+          "generated_utc": "2026-10-22T17:32:29+00:00"
+        },
+        "minutes": 5.0,
+        "ok": true
+      },
+      {
+        "family": "ma_crossover",
+        "strategy": "MaCrossoverFT",
+        "in_sample": {
+          "strategy": "MaCrossoverFT",
+          "timerange": "20250101-20260401",
+          "trades": 48,
+          "wins": 14,
+          "losses": 34,
+          "win_rate": 0.2917,
+          "expectancy_r": 0.0832,
+          "net_profit_pct": 0.127,
+          "max_drawdown_pct": 0.11,
+          "buy_params": {
+            "buffer_atr": 0.56,
+            "fast": 48,
+            "kind": "sma",
+            "slow_gap": 36,
+            "stop_atr": 1.25,
+            "stop_scale": 0.58,
+            "tp_r": 2.8
+          },
+          "generated_utc": "2026-10-22T17:34:25+00:00"
+        },
+        "holdout": {
+          "strategy": "MaCrossoverFT",
+          "timerange": "20260401-",
+          "trades": 19,
+          "wins": 4,
+          "losses": 15,
+          "win_rate": 0.2105,
+          "expectancy_r": -0.1567,
+          "net_profit_pct": -0.004,
+          "max_drawdown_pct": 0.08,
+          "buy_params": {
+            "buffer_atr": 0.56,
+            "fast": 48,
+            "kind": "sma",
+            "slow_gap": 36,
+            "stop_atr": 1.25,
+            "stop_scale": 0.58,
+            "tp_r": 2.8
+          },
+          "generated_utc": "2026-10-22T17:34:34+00:00"
+        },
+        "minutes": 2.1,
+        "ok": true
+      },
+      {
+        "family": "range_extreme_mr",
+        "strategy": "RangeExtremeFT",
+        "in_sample": {
+          "strategy": "RangeExtremeFT",
+          "timerange": "20250101-20260401",
+          "trades": 70,
+          "wins": 25,
+          "losses": 45,
+          "win_rate": 0.3571,
+          "expectancy_r": 0.1684,
+          "net_profit_pct": 0.516,
+          "max_drawdown_pct": 0.23,
+          "buy_params": {
+            "hi_rsi": 64.4,
+            "lookback": 185,
+            "stop_scale": 1.6,
+            "tp_r": 2.2
+          },
+          "generated_utc": "2026-10-22T17:37:01+00:00"
+        },
+        "holdout": {
+          "strategy": "RangeExtremeFT",
+          "timerange": "20260401-",
+          "trades": 41,
+          "wins": 10,
+          "losses": 31,
+          "win_rate": 0.2439,
+          "expectancy_r": -0.1515,
+          "net_profit_pct": -0.113,
+          "max_drawdown_pct": 0.35,
+          "buy_params": {
+            "hi_rsi": 64.4,
+            "lookback": 185,
+            "stop_scale": 1.6,
+            "tp_r": 2.2
+          },
+          "generated_utc": "2026-10-22T17:37:17+00:00"
+        },
+        "minutes": 2.7,
+        "ok": true
+      },
+      {
+        "family": "rsi_mean_reversion",
+        "strategy": "RsiMeanReversionFT",
+        "in_sample": {
+          "strategy": "RsiMeanReversionFT",
+          "timerange": "20250101-20260401",
+          "trades": 369,
+          "wins": 64,
+          "losses": 305,
+          "win_rate": 0.1734,
+          "expectancy_r": -0.2487,
+          "net_profit_pct": -0.732,
+          "max_drawdown_pct": 0.82,
+          "buy_params": {
+            "confirm_bars": 3,
+            "entry": "confirm",
+            "hi": 78.0,
+            "rsi_period": 4,
+            "stop_atr": 1.4,
+            "stop_scale": 0.58,
+            "tp_r": 2.8
+          },
+          "generated_utc": "2026-10-22T17:39:23+00:00"
+        },
+        "holdout": {
+          "strategy": "RsiMeanReversionFT",
+          "timerange": "20260401-",
+          "trades": 179,
+          "wins": 39,
+          "losses": 140,
+          "win_rate": 0.2179,
+          "expectancy_r": -0.186,
+          "net_profit_pct": -0.2,
+          "max_drawdown_pct": 0.28,
+          "buy_params": {
+            "confirm_bars": 3,
+            "entry": "confirm",
+            "hi": 78.0,
+            "rsi_period": 4,
+            "stop_atr": 1.4,
+            "stop_scale": 0.58,
+            "tp_r": 2.8
+          },
+          "generated_utc": "2026-10-22T17:39:38+00:00"
+        },
+        "minutes": 2.3,
+        "ok": true
+      },
+      {
+        "family": "sweep_reclaim",
+        "strategy": "SweepReclaimFT",
+        "in_sample": {
+          "strategy": "SweepReclaimFT",
+          "timerange": "20250101-20260401",
+          "trades": 133,
+          "wins": 50,
+          "losses": 83,
+          "win_rate": 0.3759,
+          "expectancy_r": -0.0369,
+          "net_profit_pct": 0.054,
+          "max_drawdown_pct": 0.61,
+          "buy_params": {
+            "atr_mult": 0.18,
+            "confirm_bars": 3,
+            "k": 7,
+            "stop_scale": 1.4,
+            "tp_r": 1.3
+          },
+          "generated_utc": "2026-10-22T17:42:33+00:00"
+        },
+        "holdout": {
+          "strategy": "SweepReclaimFT",
+          "timerange": "20260401-",
+          "trades": 60,
+          "wins": 28,
+          "losses": 32,
+          "win_rate": 0.4667,
+          "expectancy_r": 0.1893,
+          "net_profit_pct": 0.275,
+          "max_drawdown_pct": 0.2,
+          "buy_params": {
+            "atr_mult": 0.18,
+            "confirm_bars": 3,
+            "k": 7,
+            "stop_scale": 1.4,
+            "tp_r": 1.3
+          },
+          "generated_utc": "2026-10-22T17:42:48+00:00"
+        },
+        "minutes": 3.2,
+        "ok": true
+      },
+      {
+        "family": "trend_pullback",
+        "strategy": "TrendPullbackFT",
+        "in_sample": {
+          "strategy": "TrendPullbackFT",
+          "timerange": "20250101-20260401",
+          "trades": 68,
+          "wins": 28,
+          "losses": 40,
+          "win_rate": 0.4118,
+          "expectancy_r": -0.1038,
+          "net_profit_pct": -0.169,
+          "max_drawdown_pct": 0.43,
+          "buy_params": {
+            "fast": 50,
+            "k_atr": 2.9,
+            "slow_gap": 160,
+            "stop_scale": 1.4,
+            "tp_r": 1.3
+          },
+          "generated_utc": "2026-10-22T17:45:37+00:00"
+        },
+        "holdout": {
+          "strategy": "TrendPullbackFT",
+          "timerange": "20260401-",
+          "trades": 25,
+          "wins": 9,
+          "losses": 16,
+          "win_rate": 0.36,
+          "expectancy_r": -0.1174,
+          "net_profit_pct": -0.2,
+          "max_drawdown_pct": 0.27,
+          "buy_params": {
+            "fast": 50,
+            "k_atr": 2.9,
+            "slow_gap": 160,
+            "stop_scale": 1.4,
+            "tp_r": 1.3
+          },
+          "generated_utc": "2026-10-22T17:45:48+00:00"
+        },
+        "minutes": 3.0,
+        "ok": true
+      }
+    ],
+    "generated_utc": "2026-10-22T17:45:48+00:00"
+  }
+}

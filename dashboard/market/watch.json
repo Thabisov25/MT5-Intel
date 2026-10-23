@@ -1,0 +1,26 @@
+{
+  "generated_utc": "2026-10-23T18:56:45+00:00",
+  "source": "MetaTrader5.symbol_info_tick",
+  "quotes": {
+    "USDJPY": {
+      "symbol": "USDJPY",
+      "available": true,
+      "bid": 156.87,
+      "ask": 156.892,
+      "last": null,
+      "tick_epoch": 1792792605,
+      "digits": 3,
+      "spread_pips": 2.2
+    },
+    "EURUSD": {
+      "symbol": "EURUSD",
+      "available": true,
+      "bid": 1.11922,
+      "ask": 1.11938,
+      "last": null,
+      "tick_epoch": 1792792603,
+      "digits": 5,
+      "spread_pips": 1.6
+    }
+  }
+}

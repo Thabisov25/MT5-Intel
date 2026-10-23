@@ -2,6 +2,18 @@
 //|                                             Mt5IntelSignals.mq5  |
 //|  MT5 intel - signals. This indicator places no orders.            |
 //+------------------------------------------------------------------+
+//
+//  EDITING THIS FILE? The chart does not run it - it runs a compiled copy in the terminal's
+//  MQL5\Indicators, and that copy goes stale the moment this source changes. When the edit is
+//  done, install it - it copies the file over the terminal's copy, compiles it there, and
+//  re-exports the chart files below so build and files are in step:
+//
+//      .\.venv\Scripts\python.exe -m mt5_intel.install_indicator
+//
+//  then re-attach the indicator on the chart (Ctrl+I -> remove -> drag on again) or restart
+//  MT5. The key's title line prints the version below - if the chart shows another version,
+//  the chart is running a stale build, not this file.
+//
 //  Draws the trades the Python console actually took, so the rules can be
 //  eyeballed against the chart instead of only read as numbers.
 //
@@ -51,9 +63,16 @@
 //
 //  Rows whose bar is not in the loaded history are counted and reported rather
 //  than silently dropped, so a missing arrow is explained instead of silent.
+//
+//  Every file opens with the exporter's completeness stamp - `#rows,<n>,<n>`, the row count
+//  written twice - and a read whose count does not hold caught the file mid-rewrite: it is
+//  dropped whole and the rows already on the chart stay. Without that, a half-read file drew
+//  its truncation as if it were the export - a few old arrows instead of the newest ones, a
+//  line cut short, a key counting rows the file never finished writing - and the chart
+//  flickered between two half-reads of one export around every rewrite.
 //+------------------------------------------------------------------+
 #property copyright "MT5 intel (this indicator draws only - it places no orders)"
-#property version   "1.14"
+#property version   "1.15"
 #property description "Draws the trades MT5 intel took, with the averages they were read against."
 #property description "Export first:  python -m mt5_intel.research.export_mt5 H1 --symbol USDJPY"
 #property indicator_chart_window
@@ -127,6 +146,10 @@ Trade    g_trades[];
 int      g_rows        = 0;
 int      g_unmatched   = 0;
 bool     g_rows_loaded = false;   // a read has ever succeeded (g_trades is a truthful copy)
+// Did the last accepted trades file carry the exporter's completeness stamp? A file written
+// before it existed still draws - it is read exactly as before - but the key says so, because
+// until it is re-exported the chart cannot tell a half-written read from the whole one.
+bool     g_trades_stamped = false;
 
 // The positions already announced out loud, as the entry bar and the side of each: a reload of a
 // file that has not changed has nothing new in it, and the same bar announced twice would read as
@@ -408,6 +431,26 @@ void NotifyNew()
   }
 
 //+------------------------------------------------------------------+
+//| The writer's completeness stamp, `#rows,<n>,<n>`: how many rows    |
+//| the file holds. The count is written twice so a stamp caught       |
+//| half-written cannot claim the rows it was cut after - "#rows,482,48"|
+//| reads as two numbers that disagree. Returns true when the line was |
+//| the stamp; want stays -1 for a file written before the stamp       |
+//| existed, which is read exactly as before.                          |
+//+------------------------------------------------------------------+
+bool IsRowStamp(const string line, int &want, bool &bad)
+  {
+   if(StringFind(line, "#rows,") != 0)
+      return false;
+   string parts[];
+   int n = StringSplit(StringSubstr(line, 6), (ushort)StringGetCharacter(",", 0), parts);
+   want = (n >= 1) ? (int)StringToInteger(parts[0]) : -1;
+   if(n < 2 || want < 0 || (int)StringToInteger(parts[1]) != want)
+      bad = true;
+   return true;
+  }
+
+//+------------------------------------------------------------------+
 //| Read the trades CSV. Returns the number of data rows, or -1 if     |
 //| the file is missing.                                              |
 //+------------------------------------------------------------------+
@@ -420,6 +463,8 @@ int LoadRows()
    // drawing: everything after that moment, the live pair included, never reaches the chart.
    Trade fresh[];
    int   total = 0;
+   int   want  = -1;     // the row count the file's stamp claims (-1 = a file without one)
+   bool  stamp_bad = false;
    ResetLastError();
 
    int handle = FileOpen(FileName(), FILE_READ | FILE_TXT | FILE_ANSI);
@@ -435,6 +480,10 @@ int LoadRows()
       StringTrimRight(line);
       if(StringLen(line) == 0)
          continue;
+      if(IsRowStamp(line, want, stamp_bad))
+         continue;
+      if(StringFind(line, "#") == 0)
+         continue;                       // any other comment line
       if(total == 0 && StringFind(line, "family") == 0)
          continue;                       // header row
 
@@ -479,6 +528,12 @@ int LoadRows()
    if(total == 0 && g_rows > 0)
       return -1;
 
+   // And a truncation that says something - a prefix of the rows - is a failed read too. The
+   // stamp decides: a file whose count does not hold was caught mid-rewrite, and the previous
+   // rows stay. A file with no stamp at all predates it and is read as before.
+   if(stamp_bad || (want >= 0 && total != want))
+      return -1;
+
    // The commit is one move: rows that are on the chart can never be fewer than g_rows claims.
    ArrayFree(g_trades);
    ArrayResize(g_trades, total);
@@ -486,6 +541,7 @@ int LoadRows()
       g_trades[k] = fresh[k];
    g_rows        = total;
    g_rows_loaded = true;
+   g_trades_stamped = (want >= 0);
 
    return total;
   }
@@ -509,7 +565,9 @@ bool LoadLines()
    double   f_ema_fast[], f_ema_slow[], f_sma_fast[], f_sma_slow[];
    bool     f_fast_ok[], f_slow_ok[], f_smafast_ok[], f_smaslow_ok[];
 
-   int total = 0;
+   int  total = 0;
+   int  want  = -1;
+   bool stamp_bad = false;
    ushort comma = (ushort)StringGetCharacter(",", 0);
    while(!FileIsEnding(handle))
      {
@@ -517,6 +575,10 @@ bool LoadLines()
       StringTrimLeft(line);
       StringTrimRight(line);
       if(StringLen(line) == 0)
+         continue;
+      if(IsRowStamp(line, want, stamp_bad))
+         continue;
+      if(StringFind(line, "#") == 0)
          continue;
       if(total == 0 && StringFind(line, "time") == 0)
          continue;
@@ -553,6 +615,11 @@ bool LoadLines()
 
    // Same empty-read rule as the trades: a mid-rewrite window committed nothing.
    if(total == 0 && g_line_rows > 0)
+      return false;
+
+   // And the same stamp rule: a count that does not hold is half a file, and half a file draws
+   // a line cut short at the oldest rows it happened to finish writing.
+   if(stamp_bad || (want >= 0 && total != want))
       return false;
 
    g_line_rows  = total;
@@ -594,7 +661,9 @@ bool LoadContext()
       return false;
 
    string f_key[], f_val[];
-   int total = 0;
+   int  total = 0;
+   int  want  = -1;
+   bool stamp_bad = false;
    ushort comma = (ushort)StringGetCharacter(",", 0);
    while(!FileIsEnding(handle))
      {
@@ -602,6 +671,10 @@ bool LoadContext()
       StringTrimLeft(line);
       StringTrimRight(line);
       if(StringLen(line) == 0)
+         continue;
+      if(IsRowStamp(line, want, stamp_bad))
+         continue;
+      if(StringFind(line, "#") == 0)
          continue;
       if(total == 0 && StringFind(line, "key") == 0)
          continue;
@@ -618,6 +691,11 @@ bool LoadContext()
    FileClose(handle);
 
    if(total == 0 && ArraySize(g_ctx_key) > 0)
+      return false;
+
+   // The same stamp rule: the key is read row by row, and a half-read one prints "?" beside
+   // numbers the panel on the Live tab still has.
+   if(stamp_bad || (want >= 0 && total != want))
       return false;
 
    ArrayFree(g_ctx_key);
@@ -707,7 +785,7 @@ void DrawRangeBox(const int rates_total)
 //| the terminal draws them as ordinary lines - colour, width and style  |
 //| then live in the usual Indicator Properties dialog.                 |
 //+------------------------------------------------------------------+
-void FillBuffers(const int rates_total)
+void FillBuffers()
   {
    g_refill = false;
    ArrayInitialize(BufEmaFast, EMPTY_VALUE);
@@ -715,7 +793,13 @@ void FillBuffers(const int rates_total)
    ArrayInitialize(BufSmaFast, EMPTY_VALUE);
    ArrayInitialize(BufSmaSlow, EMPTY_VALUE);
 
-   if(!InpShowLines || g_line_rows == 0 || rates_total <= 0)
+   // The buffers are the arrays being written into, so their own size is the only count that can
+   // decide an index. The callers' counts - OnCalculate's rates_total, OnTimer's Bars() - come
+   // apart for a moment while history is still arriving, and indexing the buffers by the larger
+   // one is an "array out of range": a critical error that stops the indicator drawing anything
+   // after it, at exactly the refresh where history was moving.
+   int nbuf = ArraySize(BufEmaFast);
+   if(!InpShowLines || g_line_rows == 0 || nbuf <= 0)
       return;
 
    // The rows are the newest contiguous run of bars, so the newest row is found
@@ -736,8 +820,8 @@ void FillBuffers(const int rates_total)
          break;
       if(iTime(_Symbol, PERIOD_CURRENT, shift) != g_line_time[k])
          break;
-      int idx = rates_total - 1 - shift;
-      if(idx < 0 || idx >= rates_total)
+      int idx = nbuf - 1 - shift;
+      if(idx < 0 || idx >= nbuf)
          break;
       if(InpLineEma)
         {
@@ -949,7 +1033,10 @@ void DrawPanel()
    color  colors[];
    int    n = 0;
 
-   AddPanelLine(lines, colors, tags, n, "MT5 intel - signals (this indicator places no orders)",
+   // The version is printed as well as declared in #property: a chart running a stale compiled
+   // copy is otherwise invisible, and "the fix did nothing" and "the old build is attached" look
+   // the same. tests/test_export_mt5.py pins the two together.
+   AddPanelLine(lines, colors, tags, n, "MT5 intel - signals v1.15 (this indicator places no orders)",
                 strong, "");
 
    // Only a fault earns a line above the key, and there is none in a healthy run: a file from
@@ -987,6 +1074,10 @@ void DrawPanel()
                    "!! " + IntegerToString(g_unmatched)
                    + " rows had no bar in history - scroll back, or raise Max bars in chart",
                    warn, "");
+   if(g_rows_loaded && !g_trades_stamped)
+      AddPanelLine(lines, colors, tags, n,
+                   "!! " + FileName() + " predates the completeness stamp - re-export it: until"
+                   + " then the chart cannot tell a half-written read from the whole one", warn, "");
 
    AddPanelLine(lines, colors, tags, n,
                 "key - swatch = arrow colour, tag = arrow name"
@@ -1152,12 +1243,13 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
   {
-   LoadRows();
+   // Draw() reads the trades file itself. Reading it here as well only doubled the chances of
+   // meeting the exporter's rewrite halfway, and read the file twice within one paint.
    LoadContext();
    LoadLines();
    Draw();
    DrawPanel();
-   FillBuffers(Bars(_Symbol, PERIOD_CURRENT));
+   FillBuffers();
    ChartRedraw();
   }
 
@@ -1179,7 +1271,7 @@ int OnCalculate(const int rates_total, const int prev_calculated,
    // against this paint: filled after it, the first paint of a chart would say that none of the
    // averages could be placed - the one reading that is alarming rather than merely stale.
    if(g_refill)
-      FillBuffers(rates_total);
+      FillBuffers();
    if(new_bars)
      {
       Draw();

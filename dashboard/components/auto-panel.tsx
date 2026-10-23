@@ -335,6 +335,18 @@ export function AutoPanel() {
           nothing.
         </p>
       ) : null}
+      {/* The budget violation is one finding, not per-strategy noise: several cards in one cycle
+          refused because even the minimum lot outran the budget say the account is too small for
+          the strategies' stops. Highlighted, not muted - funding the account is the caller's act. */}
+      {status.budgetRefusals && status.budgetRefusals > 0 ? (
+        <p className="muted" role="alert">
+          <span className="pill pill-warn">budget violation</span>{" "}
+          {status.budgetRefusals} candidate trade{status.budgetRefusals === 1 ? " was" : "s were"}{" "}
+          refused because the smallest possible lot risks more than the risk budget - the account is
+          too small (relative to its stop distances) for these signals. Fund the account or raise
+          the risk budget.
+        </p>
+      ) : null}
       {status.notes.length ? (
         <p className="muted" aria-live="polite">
           {status.notes.join(" ")}

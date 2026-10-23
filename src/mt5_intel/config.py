@@ -17,6 +17,40 @@ class ConfigError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class StopManage:
+    """The two rules that move a stop after entry, and the levels they act at.
+
+    Split out of `Settings` because it is the one part of the configuration that has to be
+    read by two engines: the live watcher, which sends the moves to the broker, and the
+    freqtrade backtester, which has to reproduce them or it is measuring a system that does
+    not exist. `load_stop_manage` is the single reader, so a change to one of these numbers
+    in the .env moves both at once.
+    """
+
+    manage: bool
+    breakeven_r: float
+    lock_r: float
+    trail_r: float
+    trail_distance_r: float
+
+
+def load_stop_manage() -> StopManage:
+    """The stop-management settings, without demanding broker credentials.
+
+    The freqtrade engine runs in a separate venv and never logs in, so asking it for
+    `load_settings` would fail on missing credentials it has no use for. This reads the same
+    five variables `load_settings` reads, so the backtest and the watcher cannot drift.
+    """
+    return StopManage(
+        manage=_flag("AUTO_MANAGE", True),
+        breakeven_r=_number("AUTO_BREAKEVEN_R", 1.0),
+        lock_r=_number("AUTO_LOCK_R", 0.1),
+        trail_r=_number("AUTO_TRAIL_R", 2.0),
+        trail_distance_r=_number("AUTO_TRAIL_DISTANCE_R", 1.0),
+    )
+
+
+@dataclass(frozen=True)
 class Settings:
     login: int
     password: str
@@ -116,6 +150,7 @@ def load_settings(env_file: Path | None = None) -> Settings:
         raise ConfigError("MT5_LOGIN must be the numeric account number")
     offset_raw = _get("MT5_UTC_OFFSET_HOURS")
     report_dir = PROJECT_ROOT / (_get("REPORT_DIR") or "reports")
+    stop = load_stop_manage()
     return Settings(
         login=int(login_raw),
         password=_get("MT5_PASSWORD") or "",
@@ -146,11 +181,11 @@ def load_settings(env_file: Path | None = None) -> Settings:
         auto_max_positions=int(_number("AUTO_TRADE_MAX_POSITIONS", 2)),
         auto_magic=int(_number("AUTO_TRADE_MAGIC", 20261013)),
         auto_risk_pct=_number("AUTO_TRADE_RISK_PCT", 0.0) or _number("RISK_PCT", 1.0),
-        auto_manage=_flag("AUTO_MANAGE", True),
-        auto_breakeven_r=_number("AUTO_BREAKEVEN_R", 1.0),
-        auto_lock_r=_number("AUTO_LOCK_R", 0.1),
-        auto_trail_r=_number("AUTO_TRAIL_R", 2.0),
-        auto_trail_distance_r=_number("AUTO_TRAIL_DISTANCE_R", 1.0),
+        auto_manage=stop.manage,
+        auto_breakeven_r=stop.breakeven_r,
+        auto_lock_r=stop.lock_r,
+        auto_trail_r=stop.trail_r,
+        auto_trail_distance_r=stop.trail_distance_r,
         auto_tp_handoff=_flag("AUTO_TP_HANDOFF", True),
         auto_reverse_close=_flag("AUTO_REVERSE_CLOSE", True),
     )

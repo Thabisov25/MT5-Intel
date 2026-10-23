@@ -81,6 +81,21 @@ export const TP_MODES = ["fixed", "swing"] as const;
 export type TpMode = (typeof TP_MODES)[number];
 
 /**
+ * The per-symbol position caps as the watcher reads them, from `auto-caps.json`.
+ *
+ * `symbols` holds one cap per market that has been special-cased; `default` - when the file
+ * carries one - replaces the .env's `AUTO_TRADE_MAX_POSITIONS` for every symbol the map does not
+ * name. Both are optional because a file that names nothing valid reads as no override at all:
+ * null here means "the .env cap is in force everywhere", the same honest reading the selection
+ * gives a .env-chosen strategy list.
+ */
+export interface AutoCaps {
+  symbols: Record<string, number>;
+  default?: number;
+  updatedUtc?: string | null;
+}
+
+/**
  * A `tp_mode` map read in strictly, or undefined when the artifact carries no such map.
  *
  * The watcher drops unknown values rather than obeying them, and this reads the same way only one
@@ -168,6 +183,10 @@ export interface AutoStatus {
   open: AutoOpenRow[];
   placed: AutoDecision[];
   refused: AutoDecision[];
+  /** Refusals this cycle-owned to the risk budget alone: the smallest lot outran the 1% budget.
+   * Several of those in one cycle is not a signal problem but an account problem - the deposit
+   * is too small for the strategies' stops - so the panel names it a warning of its own. */
+  budgetRefusals: number | null;
   /** The broker's own refusals from the journal, newest first - not just this cycle's. */
   rejected: AutoRejectedRow[];
   closed: AutoDecision[];
@@ -202,6 +221,10 @@ export function autoSelectionPath(): string {
     process.env.MT5_AUTO_SELECTION ??
     path.resolve(process.cwd(), "..", "dashboard", "auto-strategies.json")
   );
+}
+
+export function autoCapsPath(): string {
+  return process.env.MT5_AUTO_CAPS ?? path.resolve(process.cwd(), "..", "dashboard", "auto-caps.json");
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -263,6 +286,7 @@ export async function readAuto(): Promise<AutoStatus> {
         open: [],
         placed: [],
         refused: [],
+        budgetRefusals: null,
         rejected: [],
         closed: [],
         managed: [],
@@ -279,6 +303,7 @@ export async function readAuto(): Promise<AutoStatus> {
         open: [],
         placed: [],
         refused: [],
+        budgetRefusals: null,
         rejected: [],
         closed: [],
         managed: [],
@@ -292,6 +317,7 @@ export async function readAuto(): Promise<AutoStatus> {
         open: [],
         placed: [],
         refused: [],
+        budgetRefusals: null,
         rejected: [],
         closed: [],
         managed: [],
@@ -404,6 +430,9 @@ export async function readAuto(): Promise<AutoStatus> {
       : [],
     placed: asDecisions(data.placed),
     refused: asDecisions(data.refused),
+    // An old writer predating this field reads as "unknown", not as "none happened": the panel
+    // cannot claim a clean budget from a file that never counted one.
+    budgetRefusals: asNumberOrNull(data.budget_refusals),
     rejected: Array.isArray(data.rejected)
       ? (data.rejected as unknown[])
           .filter((row): row is Record<string, unknown> => typeof row === "object" && row !== null)
@@ -500,6 +529,69 @@ export async function writeSelection(
     tp_mode: tpMode ?? {},
     updated_utc: new Date().toISOString(),
     note: "Written by the dashboard's auto-trading panel. The watcher re-reads this every cycle.",
+  };
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, JSON.stringify(payload, null, 2), "utf8");
+  await rename(tmp, file);
+}
+
+/**
+ * The saved per-symbol position caps, or null when no cap is special-cased anywhere.
+ *
+ * The watcher clamps every value to 0–9 on the way in and refuses names that cannot be a symbol,
+ * so the same bounds are applied here on the way out: the two ends of the file must agree about
+ * what a valid cap is, or a dashboard typo could become a risk decision nobody made.
+ */
+export async function readCaps(): Promise<AutoCaps | null> {
+  let text: string;
+  try {
+    text = await readFile(/*turbopackIgnore: true*/ autoCapsPath(), "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const data = parsed as Record<string, unknown>;
+    const symbols: Record<string, number> = {};
+    if (typeof data.caps === "object" && data.caps !== null && !Array.isArray(data.caps)) {
+      for (const [name, value] of Object.entries(
+        data.caps as Record<string, unknown>,
+      )) {
+        const key = name.trim().toUpperCase();
+        if (/^[A-Z0-9]{1,24}$/.test(key) && asNumberOrNull(value) !== null) {
+          const n = Number(value);
+          if (Number.isInteger(n) && n >= 0 && n <= 9) symbols[key] = n;
+        }
+      }
+    }
+    const def = asNumberOrNull(data.default);
+    return {
+      symbols,
+      default:
+        def !== null && Number.isInteger(def) && def >= 0 && def <= 9 ? def : undefined,
+      updatedUtc: typeof data.updated_utc === "string" ? data.updated_utc : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write the caps, replacing the file in one step — the same rename the switch and the selection
+ * use, for the same reason: the watcher reads this every cycle and must never see a torn file,
+ * whose safe reading is "no override", because `read_caps` refuses what it cannot parse whole.
+ */
+export async function writeCaps(
+  symbols: Record<string, number>,
+  defaultValue?: number,
+): Promise<void> {
+  const file = autoCapsPath();
+  const payload = {
+    caps: symbols,
+    ...(defaultValue !== undefined ? { default: defaultValue } : {}),
+    updated_utc: new Date().toISOString(),
+    note: "Written by the dashboard's Trades page. The watcher re-reads this every cycle.",
   };
   const tmp = `${file}.tmp`;
   await writeFile(tmp, JSON.stringify(payload, null, 2), "utf8");

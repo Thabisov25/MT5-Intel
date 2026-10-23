@@ -1,0 +1,65 @@
+{
+  "_note": "Offline-only config. Freqtrade never talks to an exchange here: the bars come from tools/freqtrade_export.py (MT5) via tools/freqtrade_sync.py. 'kraken' is a data-directory namespace - it has no other role: kraken is the one supported exchange whose markets actually contain FX pairs like USD/JPY (freqtrade validates pair names against real markets even offline), and offline_mode keeps every API call out of the process. Spot mode is the honest limit of the pilot: freqtrade cannot short on spot, and every exchange it supports for futures/margin lacks FX pairs, so this engine scores the LONG side only - the research replays remain its authority for the short side. fee is 0 because freqtrade's kraken default (0.26% PER SIDE) is a crypto taker fee that does not exist on this MT5 account: the real cost is the spread, which the research rules charge in R (cost_in_r) - so these numbers are pre-spread, pre-fee, and comparable to the research tables' own pre-cost figures.",
+  "max_open_trades": 3,
+  "timeframe": "1h",
+  "stake_currency": "USD",
+  "stake_amount": 1000,
+  "tradable_balance_ratio": 1.0,
+  "dry_run": true,
+  "dry_run_wallet": 10000,
+  "fee": 0.0,
+  "trading_mode": "spot",
+  "margin_mode": "",
+  "offline_mode": true,
+  "datadir": "user_data/data/kraken",
+  "user_data_dir": "user_data",
+  "dataformat_ohlcv": "feather",
+  "mark_ohlcv_timeframe": "1h",
+  "_margin_note": "margin mode reads spot candles; no funding/mark files are needed",
+  "exchange": {
+    "name": "kraken",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {},
+    "ccxt_async_config": {},
+    "pair_whitelist": [
+      "USD/JPY",
+      "EUR/USD"
+    ],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "entry_pricing": {
+    "price_side": "same",
+    "use_order_book": true,
+    "order_book_top": 1,
+    "price_last_balance": 0.0,
+    "check_depth_of_market": {
+      "enabled": false,
+      "bids_to_ask_delta": 1
+    }
+  },
+  "exit_pricing": {
+    "price_side": "same",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "unfilledtimeout": {
+    "entry": 10,
+    "exit": 10,
+    "unit": "minutes"
+  },
+  "order_types": {
+    "entry": "limit",
+    "exit": "limit",
+    "stoploss": "market",
+    "stoploss_on_exchange": false
+  },
+  "internals": {
+    "process_throttle_secs": 5
+  }
+}

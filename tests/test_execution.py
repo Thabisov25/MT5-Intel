@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +26,7 @@ from mt5_intel.execution import (
     Switch,
     artifact,
     plans,
+    read_caps,
     read_selection,
     read_switch,
     run,
@@ -147,17 +149,20 @@ def _run(
     market: dict[str, Any] | None = None,
     validated: set[str] | None = None,
     selection_path: Path | None = None,
+    caps_file: Path | None = None,
     registry: list[dict[str, Any]] | None = None,
     now_epoch: int = NOW,
+    trader_kwargs: dict[str, Any] | None = None,
 ) -> Any:
     return run(
-        trader=MT5Trader(backend),
+        trader=MT5Trader(backend, **(trader_kwargs or {})),
         store=store,
         settings=settings,
         setups=setups,
         market=_market() if market is None else market,
         switch_path=switch_path,
         selection_path=selection_path,
+        caps_file=caps_file,
         now_epoch=now_epoch,
         offset_s=OFFSET_S,
         timeframe_s=3600,
@@ -927,6 +932,123 @@ def test_a_rejected_signal_is_not_retried_on_the_next_cycle(tmp_path: Path) -> N
     assert len(backend.orders) == 1
 
 
+# --- prices worth reading twice --------------------------------------------------------------
+
+
+def test_a_stale_priced_feed_refuses_the_entry_without_spending_the_signal(tmp_path: Path) -> None:
+    """The bars come from history; the tick does not. A dead price feed used to cost the signal.
+
+    This is the 04:21 USDJPY case: two cards passed every gate (the bar was fresh, the spread
+    readable) and were refused by the broker with 10021 "No prices", which spent their
+    reservations forever. The terminal's own price timestamp catches it one step earlier - the
+    refusal is a skip, not a rejection, so nothing is reserved and the next cycle reads the same
+    card again and trades it when the feed is back.
+    """
+    backend = _backend()
+    store = Store(tmp_path / "m.db")
+    setups = _payload([_card_row("carry_trend")])
+    switch = _arm(tmp_path)
+    # The gate's own readings come from the market dict and are fine; only the price is 10 min old.
+    stale = backend.now_epoch + 3 * 3600 - 600
+
+    def stale_tick(name: str) -> Any:
+        return SimpleNamespace(time=stale, bid=150.100, ask=150.114)
+
+    backend.symbol_info_tick = stale_tick  # type: ignore[method-assign]
+    refused = _run(backend, store, _settings(), setups=setups, switch_path=switch)
+
+    assert backend.orders == []  # nothing was sent into a feed with no prices
+    assert store.recent_auto_trades() == []  # no reservation was spent: the signal is still alive
+    assert any("last price is" in item["reason"] for item in refused.refused)
+    assert refused.rejected == []
+
+    # The feed returns; a later cycle trades the very card the stale cycle skipped.
+    fresh = backend.now_epoch + 3 * 3600 - 2
+    backend.symbol_info_tick = lambda name: SimpleNamespace(time=fresh, bid=150.100, ask=150.114)  # type: ignore[method-assign]
+    taken = _run(backend, store, _settings(), setups=setups, switch_path=switch)
+    assert len(taken.placed) == 1
+    assert store.recent_auto_trades()[0]["status"] == "placed"
+
+
+def test_a_no_prices_refusal_is_asked_once_more_with_a_fresh_price(tmp_path: Path) -> None:
+    """10021 executed nothing, so the same intent at a newly read price is a retry, not a double.
+
+    The fake quotes a different price on every read, and the retried request must carry the *new*
+    one - resending the price the server just refused would only fail again. One reservation
+    covers both requests: this is one signal becoming one position, or nothing.
+    """
+    backend = _backend(order_retcodes=[10021, 10009])
+    store = Store(tmp_path / "m.db")
+    reads: list[float] = []
+
+    def moving_tick(name: str) -> Any:
+        price = 150.114 + 0.01 * len(reads)
+        reads.append(price)
+        return SimpleNamespace(time=backend.now_epoch + 3 * 3600 - 2, bid=price - 0.014, ask=price)
+
+    backend.symbol_info_tick = moving_tick  # type: ignore[method-assign]
+    outcome = _run(
+        backend,
+        store,
+        _settings(),
+        setups=_payload([_card_row("carry_trend")]),
+        switch_path=_arm(tmp_path),
+        trader_kwargs={"retry_delay_s": 0.0},
+    )
+
+    assert len(backend.orders) == 2  # the refusal and the same intent asked again
+    assert backend.orders[0]["price"] == pytest.approx(150.124)  # the read placed() sent first
+    assert backend.orders[1]["price"] == pytest.approx(150.134)  # ...and the freshly read retry
+    rows = store.recent_auto_trades()
+    assert len(rows) == 1  # one reservation, one position
+    assert rows[0]["status"] == "placed"
+    assert rows[0]["ticket"] is not None
+    assert outcome.placed and outcome.placed[0]["ticket"] == rows[0]["ticket"]
+
+
+def test_a_no_prices_refusal_that_never_clears_is_bounded_and_still_rejected(tmp_path: Path) -> None:
+    """The retry is bounded by the same discipline as the filling-mode walk: asked, not looped."""
+    backend = _backend(order_retcode=10021, order_comment="No prices")
+    store = Store(tmp_path / "m.db")
+    outcome = _run(
+        backend,
+        store,
+        _settings(),
+        setups=_payload([_card_row("carry_trend")]),
+        switch_path=_arm(tmp_path),
+        trader_kwargs={"retry_delay_s": 0.0},
+    )
+    assert len(backend.orders) == 3  # the send plus exactly two retries - not a burst
+    assert outcome.placed == []
+    rows = store.recent_auto_trades()
+    assert rows[0]["status"] == "rejected"
+    assert rows[0]["retcode"] == 10021
+
+
+def test_a_refusal_other_than_no_prices_is_asked_once_and_never_retried(tmp_path: Path) -> None:
+    """Invalid stops is a verdict on the request; a raised error is an *uncertain* outcome.
+
+    The first would answer the same way forever, the second might have filled despite the
+    exception - and resending *that* could double a position. Neither is retried, which is what
+    keeps the retry above from becoming a general habit.
+    """
+    backends = [
+        _backend(order_retcode=10016, order_comment="Invalid stops"),
+        _backend(order_raises=True),
+    ]
+    for index, backend in enumerate(backends):
+        store = Store(tmp_path / f"m{index}.db")
+        _run(
+            backend,
+            store,
+            _settings(),
+            setups=_payload([_card_row("carry_trend")]),
+            switch_path=_arm(tmp_path),
+            trader_kwargs={"retry_delay_s": 0.0},
+        )
+        assert len(backend.orders) == 1
+
+
 def test_the_same_signal_is_never_opened_twice(tmp_path: Path) -> None:
     backend = _backend()
     store = Store(tmp_path / "m.db")
@@ -1125,6 +1247,57 @@ def test_a_position_still_inside_its_window_is_left_alone(tmp_path: Path) -> Non
     assert outcome.closed == []
 
 
+def test_the_caps_file_special_cases_one_market(tmp_path: Path) -> None:
+    """The dashboard's per-symbol cap answers for its symbol, and only for that symbol.
+
+    The account's own budget is 1 the whole way through; the file names USDJPY 2, so this
+    market's step may hold two where another - a symbol the file does not name - may hold one.
+    A file that can only ever name a special case, never widen the account silently, is the
+    guarantee.
+    """
+    caps_path = tmp_path / "auto-caps.json"
+    caps_path.write_text(
+        json.dumps({"caps": {"USDJPY": 2}}),
+        encoding="utf-8",
+    )
+    # A caps file of the same shape, but naming nothing: read as the no-override reading.
+    empty_path = tmp_path / "auto-caps-empty.json"
+    empty_path.write_text(json.dumps({"note": "nothing yet"}), encoding="utf-8")
+
+    backend = _backend()
+    store = Store(tmp_path / "m.db")
+    base = _settings(auto_max_positions=1, auto_strategies=("carry_trend", "sweep_reclaim", "confluence"))
+    settings = base
+    # Two cards on *different* bars, so they trade as their own entries rather than agreeing
+    # into one `confluence` composite: two held positions is what the override allows for.
+    rows = [
+        _card_row("carry_trend", epoch=NOW - OFFSET_S),
+        _card_row("sweep_reclaim", epoch=NOW - OFFSET_S - 3600),
+    ]
+    outcome = _run(
+        backend,
+        store,
+        settings,
+        setups=_payload(rows),
+        switch_path=_arm(tmp_path),
+        caps_file=caps_path,
+    )
+    # The override is in force and both cards fit under it.
+    assert outcome.allow["max_positions"] == 2
+    assert outcome.allow["global_max_positions"] == 1
+    assert outcome.allow["caps_override"] == 2
+    assert len(backend.orders) == 2
+    from mt5_intel.execution import Caps
+    caps = read_caps(caps_path)
+    assert caps.effective_for("EURUSD") is None
+    assert caps.effective_for("USDJPY") == 2
+
+    # And a file that says nothing valid is the no-override reading, not cap-zero.
+    empty = read_caps(empty_path)
+    assert empty.symbols == {}
+    assert empty.default is None
+
+
 def test_an_open_trade_still_counts_against_the_cap(tmp_path: Path) -> None:
     backend = _backend()
     backend.add_position(9001, volume=0.10)
@@ -1178,6 +1351,35 @@ def test_a_minimum_lot_that_risks_too_much_does_not_fit() -> None:
     )
     assert sizing.fits is False
     assert "risks more than" in (sizing.reason or "")
+
+
+def test_a_cycle_counts_its_budget_refusals_and_says_so_once(tmp_path: Path) -> None:
+    """Refusals that are the account's fault, not the signals', get one named warning.
+
+    On an account whose 1% budget is smaller than the risk of even the minimum lot at a normal
+    stop, every fresh card is refused with the same per-row reason. The cycle must also say the
+    finding outright - one note naming the pattern, and the count the dashboard warns with - so
+    a too-small deposit reads as a decision to make, not as N unrelated refusals.
+    """
+    # $100 of equity at 1% is a $1 budget, and this fake symbol's minimum lot risks $2 at the
+    # card's default 30-pip stop - exactly the "R100-on-a-standard-account" shape this warns of.
+    backend = FakeMT5(equity=100.0, balance=100.0, now=datetime(2026, 10, 13, 15, 0, tzinfo=UTC))
+    store = Store(tmp_path / "m.db")
+    outcome = _run(
+        backend,
+        store,
+        _settings(),
+        setups=_payload([_card_row("carry_trend", epoch=NOW - OFFSET_S)]),
+        switch_path=_arm(tmp_path),
+        validated={"carry_trend"},
+    )
+    assert backend.orders == []  # a refusal counts; it never sends
+    refusals = [row for row in outcome.refused if "risks more than" in (row.get("reason") or "")]
+    assert refusals, "the card should have been refused by the risk budget alone"
+    assert outcome.budget_refusals == len(refusals)
+    notes = [note for note in outcome.notes if "Budget violation" in note]
+    assert len(notes) == 1, f"exactly one named warning, got: {notes}"
+    assert "1 candidate trade was refused" in notes[0]
 
 
 def test_no_risk_budget_does_not_fit() -> None:

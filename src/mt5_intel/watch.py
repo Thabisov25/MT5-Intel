@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from . import execution, gate_rollup, gatehistory, notify, trades
+from . import execution, gate_rollup, gatehistory, market_export, notify, trades
 from .config import ConfigError, Settings, load_settings, watch_symbols
 from .datachecks import (
     FAST_MOVE_ATR_BARS,
@@ -83,6 +83,10 @@ AUTO_FILE = PROJECT_ROOT / "dashboard" / "auto.json"
 # changes which strategies may trade without a restart, and turning one off takes effect on the next
 # cycle rather than at the next launch.
 AUTO_SELECTION_FILE = PROJECT_ROOT / "dashboard" / "auto-strategies.json"
+# The dashboard's per-symbol position caps, read every cycle like the two files above: a cap
+# change is a risk decision made in the moment, so it applies on the next cycle, not the
+# next restart. The filename lives with its reader in execution, so neither copy can drift.
+AUTO_CAPS_FILE = PROJECT_ROOT / "dashboard" / execution.CAPS_FILENAME
 REPORT_DIR = PROJECT_ROOT / "reports"
 NEWS_CACHE_PATH = PROJECT_ROOT / "data" / "news_cache.json"
 
@@ -164,8 +168,11 @@ def _read_state(mt5: ReadOnlyMT5, name: str) -> dict[str, Any]:
     tick = mt5.symbol_info_tick(name)
     rates = mt5.copy_rates_from_pos(name, "M1", 0, 601)
     account = mt5.account_info()
-    info = mt5.symbol_info(name)
-    # Read-only exposure: the gate counts what is already open before it recommends anything.
+    info = mt5.symbol_info(name)     # Read-only exposure: the gate's position cap counts what OPEN the engine holds - its
+     # magic-tagged trades - not the account total. The holder's manual trades are their own book:
+     # counting them had every card answer "position limit" while the machine still had room, and
+     # the cap means "where the engine stands", not "where the account stands". The account total
+     # still travels in the recommendation payload below so nothing about the account is hidden.
     # An unreadable read is None, not an exception: D-013 says an unverified position state
     # default-denies, and a failed exposure read must not stop the whole watch loop.
     positions: tuple[Any, ...] | None
@@ -317,6 +324,7 @@ def _journal_and_decide(
     # The auto engine's own budget counts what the engine holds, not what the account does: a
     # manual trade the account holder took in parallel is theirs, and the machine's cap measured
     # against the whole account made every entry answer "position limit" while he was trading.
+    # Both the recommendation gate above and the auto step consume this count - one cap, one rule.
     auto_positions = (
         sum(
             1
@@ -376,7 +384,8 @@ def _journal_and_decide(
             news_verifiable=news_verifiable,
             news_excluded=news_excluded,
             daily_loss_pct=daily_loss_pct,
-            open_positions=open_positions,
+            # The strict cap: the engine's own trades, never the account total (read above).
+            open_positions=auto_positions,
             circuit_breaker_tripped=move.tripped,
             validated_strategy=_validated_strategy_id(store),
             # Sizing needs a candidate trade's stop, and nothing produces one yet; card
@@ -397,7 +406,7 @@ def _journal_and_decide(
             "market_open": is_market_open_utc(now_epoch) if connected else None,
             "validated_strategy": _validated_strategy_id(store),
             "daily_loss_pct": daily_loss_pct,
-            "positions": {"total": open_positions, "symbol": symbol_positions},
+            "positions": {"total": open_positions, "auto": auto_positions, "symbol": symbol_positions},
             "fast_move": _fast_move_detail(move, pip_size_factor),
             "news": news_detail,
         },
@@ -666,6 +675,22 @@ def _refresh_extra_symbols(
             )
 
 
+def _export_market_artifacts(mt5: ReadOnlyMT5, symbols: tuple[str, ...], store: Store, summary: dict[str, Any]) -> None:
+    """Refresh the terminal's bar/tick artifacts on the cycle's read-only connection.
+
+    A failure is recorded as an event, not raised: the terminal degrades to its own
+    staleness chip and should never take the watcher's journal-and-decide cycle down with it.
+    """
+    try:
+        written = market_export.run_once(mt5, symbols, market_export.DEFAULT_BARS)
+        summary["market_export"] = {"written": written}
+    except Exception as exc:  # noqa: BLE001 - one chart frame's fault is not the cycle's fault
+        store.append_event(
+            "market_export_error",
+            {"error": type(exc).__name__, "message": str(exc)},
+        )
+
+
 def _chart_export_due(
     mt5: ReadOnlyMT5, now_epoch: int, symbol: str = "", timeframe: str = WATCH_TIMEFRAME
 ) -> bool:
@@ -842,6 +867,7 @@ def _auto_step(
                 market=market,
                 switch_path=AUTO_SWITCH_FILE,
                 selection_path=AUTO_SELECTION_FILE,
+                caps_file=AUTO_CAPS_FILE,
                 now_epoch=now_epoch,
                 offset_s=offset_s if isinstance(offset_s, int) else None,
                 timeframe_s=WATCH_TIMEFRAME_S,
@@ -974,6 +1000,10 @@ def main() -> int:
             # like every other write here: gated, journaled, and read by the dashboard's own
             # timeframe tabs - never by the auto step, which reads only the H1 artifacts below.
             _refresh_extra_timeframes(mt5, settings, store, now_epoch)
+            # The terminal's bar/tick artifacts ride the same read-only connection: refresh
+            # them every cycle too, so the web terminal's candles and Market Watch stay
+            # live without a second process polling the terminal.
+            _export_market_artifacts(mt5, watched, store, summary)
             # Each extra symbol gets its own gated cycle - its own gate readings, its own
             # recommendation rows - gathered into the status's `symbols` map so the dashboard's
             # per-symbol views read one heartbeat, and gathered BEFORE the step below, which reads

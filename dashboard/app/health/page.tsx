@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ClusteringPanel } from "@/components/clustering-panel";
 import { HealthRefresh } from "@/components/health-refresh";
 import { PageHead, PanelHead } from "@/components/info";
+import { ContextNav, WorkspaceFrame, systemNavItems } from "@/components/shell/context-nav";
 import { Tabs } from "@/components/tabs";
 import { formatBytes, LOG_CAP_BYTES, readHealth, toneClass, type PerSymbolWatch } from "@/lib/health";
 
@@ -399,7 +400,7 @@ export default async function HealthPage() {
   const overCap = logsByRecency.filter((log) => log.bytes > LOG_CAP_BYTES).length;
 
   return (
-    <>
+    <WorkspaceFrame nav={<ContextNav heading="System workspace" items={systemNavItems()} />}>
       <PageHead
         title="Health"
         about={
@@ -505,6 +506,6 @@ export default async function HealthPage() {
           },
         ]}
       />
-    </>
+    </WorkspaceFrame>
   );
 }

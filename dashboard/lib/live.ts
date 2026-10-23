@@ -20,6 +20,8 @@ export interface LiveStatus {
   mode?: string;
   marketState?: string;
   heartbeatTtlS?: number;
+  /** The primary symbol's server→UTC offset, seconds, measured by the cycle. */
+  marketOffsetS?: number | null;
 }
 
 const MAX_HEARTBEAT_AGE_S = 180;
@@ -41,6 +43,8 @@ export interface SymbolLive {
   gateVerdict?: string;
   gateReasons?: string[];
   recId?: number | null;
+  /** The symbol's own server→UTC offset, seconds, measured by its cycle. */
+  offsetS?: number | null;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -91,6 +95,7 @@ export async function readLiveStatus(): Promise<LiveStatus> {
         gateVerdict: asString(row.gate_verdict, ""),
         gateReasons: Array.isArray(row.gate_reasons) ? row.gate_reasons.map(String) : [],
         recId: asNumberOrNull(row.rec_id),
+        offsetS: asNumberOrNull(row.offset_s),
       };
     }
   }
@@ -110,6 +115,9 @@ export async function readLiveStatus(): Promise<LiveStatus> {
     mode: typeof data.mode === "string" ? data.mode : undefined,
     marketState: typeof data.market_state === "string" ? data.market_state : undefined,
     heartbeatTtlS: asNumberOrNull(data.heartbeat_ttl_s) ?? undefined,
+    marketOffsetS: asNumberOrNull(
+      (typeof data.market === "object" && data.market !== null ? (data.market as Record<string, unknown>).offset_s : null),
+    ),
     symbols: Object.keys(symbols).length > 0 ? symbols : undefined,
   };
 }

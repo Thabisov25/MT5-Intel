@@ -1,4 +1,4 @@
-import { STRATEGIES, strategyInfo } from "@/lib/strategies";
+import { SCALP_IDS, STRATEGIES, strategyInfo } from "@/lib/strategies";
 
 /**
  * The one explanation of how this system decides, enters and judges a trade.
@@ -172,49 +172,126 @@ export function StrategyCell({
   );
 }
 
+/** The eight families the freqtrade engine runs, in the order the engine lists them. */
+const CORE_IDS = [
+  "sweep_reclaim",
+  "carry_trend",
+  "compression_breakout",
+  "trend_pullback",
+  "range_extreme_mr",
+  "daily_momentum",
+  "ma_crossover",
+  "rsi_mean_reversion",
+];
+
+/**
+ * One rule as a single line: name, id, what it waits for. Closed until asked.
+ *
+ * This used to be a card in a three-column grid, where every rule showed all six of its fields
+ * at once - a wall of prose with no way to find the one rule being asked about. The line is the
+ * index; the fields are the answer to "tell me about that one".
+ */
+function RuleEntry({ id }: { id: string }) {
+  const info = strategyInfo(id);
+  return (
+    <details className="rule-entry">
+      <summary>
+        <span className="rule-name">{info.name}</span>
+        <span className="tag">{id}</span>
+        <span className="rule-waits">{info.waits}</span>
+      </summary>
+      <dl className="facts">
+        <div>
+          <dt>Entry</dt>
+          <dd>{info.entry}</dd>
+        </div>
+        <div>
+          <dt>Stop loss</dt>
+          <dd>{info.stop}</dd>
+        </div>
+        <div>
+          <dt>Take profit</dt>
+          <dd>{info.target}</dd>
+        </div>
+        <div>
+          <dt>Timeframes</dt>
+          <dd>{info.timeframes}</dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{info.origin}</dd>
+        </div>
+        <div>
+          <dt>Measured status</dt>
+          <dd>{info.evidence}</dd>
+        </div>
+      </dl>
+    </details>
+  );
+}
+
+function RuleGroup({
+  title,
+  note,
+  ids,
+}: {
+  title: string;
+  note: string;
+  ids: readonly string[];
+}) {
+  if (ids.length === 0) return null;
+  return (
+    <section className="rule-group" aria-label={title}>
+      <h3 className="rule-group-head">
+        {title} <span className="tag">{note}</span>
+      </h3>
+      <div className="rule-list">
+        {ids.map((id) => (
+          <RuleEntry key={id} id={id} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /**
  * Every family's rules on one surface: what it waits for, where the stop and target go,
  * where the rule came from, and how it has actually performed. No navigation required.
+ *
+ * Grouped and closed by default. Every entry is a line you can scan; opening one shows the six
+ * fields that describe it as the code implements them. The groups are derived from the catalogue
+ * rather than hand-maintained, so a rule added later cannot go missing from the reference.
  */
 export function StrategyRuleboard() {
+  const ids = Object.keys(STRATEGIES);
+  const core = CORE_IDS.filter((id) => ids.includes(id));
+  const scalp = SCALP_IDS.filter((id) => ids.includes(id));
+  // Everything else is in the catalogue to be *read* - the composite and the combination of two
+  // rules on one candle - and neither issues a trade of its own.
+  const derived = ids.filter((id) => !core.includes(id) && !scalp.includes(id));
   return (
     <section className="panel" aria-labelledby="ruleboard">
-      <h2 id="ruleboard">The rules, family by family</h2>
+      <h2 id="ruleboard">Reference &middot; the rules, family by family</h2>
       <p className="guide-copy muted">
-        Each block is one rule as the code implements it, including where it came from. Prices on a
-        card are built from the stop: the target is a fixed multiple of it.
+        One line per rule: its name, its id, and what it waits for. Open a line for the rest &mdash;
+        entry, stop, target, where the rule came from, and what it measured. Prices on a card are
+        built from the stop: the target is a fixed multiple of it.
       </p>
-      <div className="rule-grid">
-        {Object.entries(STRATEGIES).map(([id, info]) => (
-          <article className="rule-card" key={id}>
-            <h3>
-              {info.name} <span className="tag">{id}</span>
-            </h3>
-            <dl className="facts">
-              <div>
-                <dt>Entry</dt>
-                <dd>{info.entry}</dd>
-              </div>
-              <div>
-                <dt>Stop loss</dt>
-                <dd>{info.stop}</dd>
-              </div>
-              <div>
-                <dt>Take profit</dt>
-                <dd>{info.target}</dd>
-              </div>
-              <div>
-                <dt>Source</dt>
-                <dd>{info.origin}</dd>
-              </div>
-              <div>
-                <dt>Measured status</dt>
-                <dd>{info.evidence}</dd>
-              </div>
-            </dl>
-          </article>
-        ))}
-      </div>
+      <RuleGroup
+        title="Core families"
+        note={`${core.length} · the freqtrade engine runs these`}
+        ids={core}
+      />
+      <RuleGroup
+        title="Scalp templates"
+        note={`${scalp.length} · intraday, M5/M15/H1`}
+        ids={scalp}
+      />
+      <RuleGroup
+        title="Not a rule on its own"
+        note={`${derived.length} · named so a reader can recognise them`}
+        ids={derived}
+      />
     </section>
   );
 }

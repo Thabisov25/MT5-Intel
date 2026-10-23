@@ -1,0 +1,6 @@
+{
+  "caps": {},
+  "default": 3,
+  "updated_utc": "2026-10-22T16:54:18.861Z",
+  "note": "Written by the dashboard's Trades page. The watcher re-reads this every cycle."
+}

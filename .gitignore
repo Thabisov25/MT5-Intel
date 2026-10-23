@@ -1,5 +1,8 @@
 .env
 .venv/
+# The freqtrade engine's own environment: a second full Python venv (deps differ from the
+# project's, which is the point - see tools/freqtrade_run_backtest.py). Never committed.
+.venv-freqtrade/
 __pycache__/
 *.egg-info/
 .pytest_cache/
@@ -8,6 +11,9 @@ __pycache__/
 reports/
 data/
 logs/
+# The market-export daemon's own runtime litter, wherever it drops it.
+*.pid
+*.log
 dashboard/gate-history.json
 dashboard/trades.json
 # Auto-trading state: the view the watcher writes and the two files the dashboard writes.
@@ -24,6 +30,10 @@ dashboard/setups*.json
 # The watcher's loop-status heartbeat.
 dashboard/live-status.json
 *.lnk
+
+# Atomic-write leftovers: every artifact here is written to a .tmp sibling and renamed, so a
+# reader never sees a half file. A crash between the two leaves the .tmp behind, and it is# never the artifact anybody wants.
+*.tmp
 
 # Dev-server artifacts.
 .next-dev*.log

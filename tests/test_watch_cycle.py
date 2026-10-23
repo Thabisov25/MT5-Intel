@@ -216,12 +216,14 @@ def test_gate_inputs_come_from_reads_not_placeholders(
     )
 
     assert "POSITIONS_UNVERIFIED" not in summary["gate_reasons"]
-    assert "POSITION_LIMIT" not in summary["gate_reasons"]  # one open against a cap of two
+    # One manual-looking position on the account, none the engine's own: the strict cap is not
+    # tripped by the holder's book.
+    assert "POSITION_LIMIT" not in summary["gate_reasons"]
     assert "DAILY_LOSS_UNVERIFIED" not in summary["gate_reasons"]
     assert "FAST_MOVE_CIRCUIT_BREAKER" not in summary["gate_reasons"]  # the fake series is calm
 
     payload = store.recent_recommendations(limit=1)[0]["payload"]
-    assert payload["positions"] == {"total": 1, "symbol": 1}
+    assert payload["positions"] == {"total": 1, "auto": 0, "symbol": 1}
     # The offset comes from the live tick (GMT+3 here), so the day is the broker's day.
     assert payload["daily_loss_pct"] == 0.0
     assert payload["fast_move"]["measured"] is True
@@ -232,9 +234,19 @@ def test_gate_inputs_come_from_reads_not_placeholders(
 def test_position_limit_trips_when_exposure_is_at_the_cap(
     tmp_path: Path, no_notify: Callable[..., None]
 ) -> None:
+    """The cap counts the engine's own trades only - and it still trips when they fill it.
+
+    Two manual trades that never belonged to the machine sit beside it. They do not eat the
+    budget; two market-magic trades do. The earlier failure this test's opposite proved is the
+    account total tripping a cap the engine owns, so a manual-only account must stay clear and
+    a code-matched pair at the cap must refuse a third.
+    """
     store = Store(tmp_path / "mt5.db")
-    backend = FakeMT5(now=WEDNESDAY_10_UTC, symbol_name="USDJPY", positions=2)
     settings = _settings(tmp_path)
+    backend = FakeMT5(now=WEDNESDAY_10_UTC, symbol_name="USDJPY", positions=2)
+    # Two more, tagged with the engine's own magic, at its cap of two.
+    backend.add_position(9801, magic=settings.auto_magic)
+    backend.add_position(9802, magic=settings.auto_magic)
     adapter = ReadOnlyMT5(backend)
     summary = watch._journal_and_decide(
         store, settings, watch._read_state(adapter, settings.symbol_root),
@@ -242,6 +254,10 @@ def test_position_limit_trips_when_exposure_is_at_the_cap(
     )
     assert "POSITION_LIMIT" in summary["gate_reasons"]
     assert "POSITIONS_UNVERIFIED" not in summary["gate_reasons"]
+    payload = store.recent_recommendations(limit=1)[0]["payload"]
+    # Both counts travel in the record: the account's four and the engine's own two.
+    assert payload["positions"] == {"total": 4, "auto": 2, "symbol": 4}
+
 
 
 def test_daily_loss_is_measured_from_the_days_opening_equity(
@@ -610,7 +626,7 @@ def test_unreadable_positions_default_deny_instead_of_stopping_the_cycle(
     summary = watch._journal_and_decide(store, settings, state, int(WEDNESDAY_10_UTC.timestamp()))
     assert "POSITIONS_UNVERIFIED" in summary["gate_reasons"]
     payload = store.recent_recommendations(limit=1)[0]["payload"]
-    assert payload["positions"] == {"total": None, "symbol": None}
+    assert payload["positions"] == {"total": None, "auto": None, "symbol": None}
 
 
 def test_trades_refresh_writes_the_journal_on_its_own_timer(

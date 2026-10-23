@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { ReportView } from "@/components/report-view";
+import { ContextNav, WorkspaceFrame, researchNavItems } from "@/components/shell/context-nav";
 import { getReport } from "@/lib/reports";
 
 // This route awaits its id before streaming, so an unknown id can return a real 404 status.
@@ -29,7 +30,7 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
   }
 
   return (
-    <>
+    <WorkspaceFrame nav={<ContextNav heading="Research workspace" items={researchNavItems("/runs")} />}>
       <header className="page-head">
         <p className="muted">
           <Link href="/runs">All runs</Link> · run {entry.report.id}
@@ -37,6 +38,6 @@ export default async function RunPage({ params }: { params: Promise<{ id: string
         <h1>Diagnostic run</h1>
       </header>
       <ReportView report={entry.report} />
-    </>
+    </WorkspaceFrame>
   );
 }

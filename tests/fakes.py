@@ -73,6 +73,11 @@ class FakeMT5:
         deals: list[Any] | None = None,
         deals_unavailable: bool = False,
         order_retcode: int | None = None,
+        # Per-send answers, consumed one per order_send - so a test can rehearse the sequence the
+        # live terminal produced: a 10021 "No prices" that a re-read price then fills. When the
+        # list runs out the last value repeats, so a retry that fires too often fails the test's
+        # call-count assertion rather than silently succeeding.
+        order_retcodes: list[int] | None = None,
         order_comment: str = "Done",
         order_raises: bool = False,
         tick: bool = True,
@@ -103,6 +108,7 @@ class FakeMT5:
         self.deals = list(deals) if deals else []
         self.deals_unavailable = deals_unavailable
         self.order_retcode = order_retcode
+        self.order_retcodes = list(order_retcodes) if order_retcodes else None
         self.order_comment = order_comment
         self.order_raises = order_raises
         self.tick = tick
@@ -272,7 +278,10 @@ class FakeMT5:
                         row.tp = float(request["tp"])
 
         self._next_order += 1
-        retcode = self.order_retcode if self.order_retcode is not None else self.TRADE_RETCODE_DONE
+        if self.order_retcodes:
+            retcode = self.order_retcodes.pop(0) if len(self.order_retcodes) > 1 else self.order_retcodes[0]
+        else:
+            retcode = self.order_retcode if self.order_retcode is not None else self.TRADE_RETCODE_DONE
         return SimpleNamespace(
             retcode=retcode,
             comment=self.order_comment,

@@ -1,0 +1,31 @@
+{
+  "strategy_name": "MaCrossoverFT",
+  "params": {
+    "roi": {
+      "0": 9999.9
+    },
+    "stoploss": {
+      "stoploss": -0.99
+    },
+    "trailing": {
+      "trailing_stop": false,
+      "trailing_stop_positive": null,
+      "trailing_stop_positive_offset": 0.0,
+      "trailing_only_offset_is_reached": false
+    },
+    "max_open_trades": {
+      "max_open_trades": 3
+    },
+    "buy": {
+      "buffer_atr": 0.56,
+      "fast": 48,
+      "kind": "sma",
+      "slow_gap": 36,
+      "stop_atr": 1.25,
+      "stop_scale": 0.58,
+      "tp_r": 2.8
+    }
+  },
+  "ft_stratparam_v": 1,
+  "export_time": "2026-10-22 17:34:10.090255+00:00"
+}

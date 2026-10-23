@@ -2,12 +2,13 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { PageHead } from "@/components/info";
+import { ContextNav, WorkspaceFrame, researchNavItems } from "@/components/shell/context-nav";
 import { StatusPill } from "@/components/report-view";
 import { listReports } from "@/lib/reports";
 
 export default function RunsPage() {
   return (
-    <>
+    <WorkspaceFrame nav={<ContextNav heading="Research workspace" items={researchNavItems("/runs")} />}>
       <PageHead
         title="All runs"
         about={
@@ -20,7 +21,7 @@ export default function RunsPage() {
       <Suspense fallback={<p className="muted" role="status">Reading reports…</p>}>
         <RunsTable />
       </Suspense>
-    </>
+    </WorkspaceFrame>
   );
 }
 

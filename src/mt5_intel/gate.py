@@ -45,6 +45,8 @@ class GateInputs:
     circuit_breaker_tripped: bool = True    # tripped until measured calm
     daily_loss_pct: float | None = None     # None = cannot verify positions/equity
     daily_loss_limit_pct: float = 3.0
+    # The count this gate's cap judges: the engine's own (magic-tagged) positions, not the
+    # account total. Manual trades are the holder's book, not the machine's budget.
     open_positions: int | None = None       # None = cannot verify
     max_positions: int = 2
     validated_strategy: str | None = None   # None = nothing has passed research

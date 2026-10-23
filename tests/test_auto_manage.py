@@ -9,6 +9,8 @@ the settings is readable off the price the test chose.
 
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -300,3 +302,114 @@ def test_the_artifact_carries_the_managed_actions(tmp_path: Path) -> None:
 
     assert [item["kind"] for item in view["managed"]] == ["breakeven"]
     assert view["managed"][0]["sl"] == pytest.approx(150.130)
+
+
+# --- the backtest engine has to measure the same management -----------------------------
+#
+# The freqtrade engine grades these families, and a backtest with fixed barriers grades a
+# system that does not trade: the live account locks and trails, so the losses a fixed-barrier
+# backtest shows are not the losses the account would take. These tests hold the two together.
+
+
+def _tools_on_path() -> None:
+    tools = Path(__file__).resolve().parents[1] / "tools"
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+
+
+def test_the_runner_hands_over_the_settings_the_watcher_actually_reads(monkeypatch) -> None:
+    """`manage_env` is the whole bridge, so it must follow the .env, not a copy of it."""
+    _tools_on_path()
+    from freqtrade_run_backtest import manage_env
+
+    monkeypatch.setenv("AUTO_MANAGE", "yes")
+    monkeypatch.setenv("AUTO_BREAKEVEN_R", "1.25")
+    monkeypatch.setenv("AUTO_LOCK_R", "0.2")
+    monkeypatch.setenv("AUTO_TRAIL_R", "2.5")
+    monkeypatch.setenv("AUTO_TRAIL_DISTANCE_R", "0.75")
+
+    handed = manage_env()
+
+    assert handed["MT5INTEL_MANAGE"] == "1"
+    assert float(handed["MT5INTEL_BREAKEVEN_R"]) == pytest.approx(1.25)
+    assert float(handed["MT5INTEL_LOCK_R"]) == pytest.approx(0.2)
+    assert float(handed["MT5INTEL_TRAIL_R"]) == pytest.approx(2.5)
+    assert float(handed["MT5INTEL_TRAIL_DISTANCE_R"]) == pytest.approx(0.75)
+
+    # The switch is a real switch: off, and the backtest measures fixed barriers again.
+    monkeypatch.setenv("AUTO_MANAGE", "off")
+    assert manage_env()["MT5INTEL_MANAGE"] == "0"
+
+
+def test_the_strategy_reads_exactly_the_variables_the_runner_writes(monkeypatch) -> None:
+    """Both halves of the bridge, checked against each other by name.
+
+    The freqtrade venv has none of this project's dependencies, so `MT5Family.py` learns where
+    the watcher puts a stop from environment variables or not at all. A typo on either side
+    leaves the backtest silently grading fixed barriers while the live account trails - and the
+    difference would read as an edge that does not exist. The runner's side is imported and run;
+    the strategy's side is read off its source, because importing it needs freqtrade.
+    """
+    _tools_on_path()
+    from freqtrade_run_backtest import PROJECT_ROOT, manage_env
+
+    monkeypatch.delenv("AUTO_MANAGE", raising=False)
+    for name in ("AUTO_BREAKEVEN_R", "AUTO_LOCK_R", "AUTO_TRAIL_R", "AUTO_TRAIL_DISTANCE_R"):
+        monkeypatch.delenv(name, raising=False)
+    handed = manage_env()
+
+    source = (PROJECT_ROOT / "user_data" / "strategies" / "MT5Family.py").read_text(
+        encoding="utf-8"
+    )
+    read = set(re.findall(r'"(MT5INTEL_[A-Z_]+)"', source))
+
+    assert read == set(handed), (
+        "the strategy and the runner disagree about the channel: "
+        f"strategy reads {sorted(read)}, runner writes {sorted(handed)}"
+    )
+    # And the defaults agree when no .env is in play, so a strategy loaded outside the runner
+    # is not quietly running a different set of rules.
+    assert set(read) == {
+        "MT5INTEL_MANAGE",
+        "MT5INTEL_BREAKEVEN_R",
+        "MT5INTEL_LOCK_R",
+        "MT5INTEL_TRAIL_R",
+        "MT5INTEL_TRAIL_DISTANCE_R",
+    }
+
+
+def test_the_shared_reader_is_the_one_load_settings_uses(monkeypatch) -> None:
+    """`Settings` and the freqtrade bridge must read one source, not two that can drift.
+
+    `load_settings` builds its five stop-management fields from `load_stop_manage`, so the
+    watcher and the backtest cannot be pointed at different numbers by editing one of them.
+    """
+    from mt5_intel.config import load_settings, load_stop_manage
+
+    # Pinned rather than cleared: `load_stop_manage` reads the process environment, which an
+    # earlier test - or a real .env - may already have filled in.
+    monkeypatch.setenv("AUTO_MANAGE", "1")
+    monkeypatch.setenv("AUTO_BREAKEVEN_R", "1.0")
+    monkeypatch.setenv("AUTO_LOCK_R", "0.1")
+    monkeypatch.setenv("AUTO_TRAIL_R", "2.0")
+    monkeypatch.setenv("AUTO_TRAIL_DISTANCE_R", "1.0")
+    stop = load_stop_manage()
+    source = Path(load_settings.__code__.co_filename).read_text(encoding="utf-8")
+
+    assert "stop = load_stop_manage()" in source
+    for field in (
+        "auto_manage=stop.manage",
+        "auto_breakeven_r=stop.breakeven_r",
+        "auto_lock_r=stop.lock_r",
+        "auto_trail_r=stop.trail_r",
+        "auto_trail_distance_r=stop.trail_distance_r",
+    ):
+        assert field in source, f"load_settings no longer takes {field.split('=')[0]} from load_stop_manage"
+    # The defaults are the documented ones, so an untouched .env is the documented behaviour.
+    assert (stop.manage, stop.breakeven_r, stop.lock_r, stop.trail_r, stop.trail_distance_r) == (
+        True,
+        1.0,
+        0.1,
+        2.0,
+        1.0,
+    )

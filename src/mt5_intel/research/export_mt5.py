@@ -27,6 +27,12 @@ The names carry the symbol because the indicator reads them off its own chart (`
 chart of another symbol cannot mistake another symbol's trades for its own - which it did, once,
 when the files were named per timeframe only.
 
+Every file opens with one stamp line, `#rows,<n>,<n>`: how many rows it holds, written twice so a
+stamp caught half-written cannot claim the rows it was cut after. The indicator trusts a file only
+when that count holds, so a read that lands inside a rewrite is dropped whole and the rows already
+on the chart stay - which is what keeps the arrows, the lines and the key from flickering between
+two half-reads of one export.
+
 Usage:
   python -m mt5_intel.research.export_mt5 [timeframe] [--bars 20000] [--per-family 60] [--out DIR]
 
@@ -102,6 +108,17 @@ LINES_HEADER: tuple[str, ...] = ("time", "ema_fast", "ema_slow", "sma_fast", "sm
 def _stamp(epoch: int) -> str:
     """The bar's own clock reading - the one the chart shows, not UTC."""
     return datetime.fromtimestamp(int(epoch), UTC).strftime("%Y.%m.%d %H:%M")
+
+
+def _rows_stamp(row_count: int) -> str:
+    """The completeness stamp every chart file opens with: `#rows,<n>,<n>`, the count twice.
+
+    Twice on purpose. A reader that lands inside a rewrite sees a prefix of the new text, and a
+    stamp cut in half - `#rows,482,48` - would otherwise claim exactly the rows it happened to be
+    cut after. With both copies present a cut stamp cannot agree with itself, and a count that
+    does not match the rows below it is a file caught mid-write, not an export.
+    """
+    return f"#rows,{row_count},{row_count}\r\n"
 
 
 def _rounded(value: float | None) -> float | None:
@@ -318,7 +335,11 @@ def _write_text_atomically(path: Path, text: str) -> None:
     rename; after a short retry the writings fall back in place rather than let the chart
     starve.
     """
-    tmp = path.with_name(path.stem + ".writing" + path.suffix)
+    # A name per write: the watcher and a hand-run CLI can export the same chart at the same
+    # moment, and two writers sharing one temp name interleave their texts before one of them
+    # renames the mangled result into place - a whole name holding half a file. (The stamps the
+    # files carry catch that on the read side; this stops it being written at all.)
+    tmp = path.with_name(f"{path.stem}.writing{os.getpid()}.{time.time_ns()}{path.suffix}")
     tmp.write_text(text, encoding="utf-8", newline="")
     try:
         for _ in range(4):
@@ -336,6 +357,7 @@ def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
     """Write the rows with an explicit header; blank cells mean \"still open\" / \"not finished\"."""
     path.parent.mkdir(parents=True, exist_ok=True)
     buffer = io.StringIO(newline="")
+    buffer.write(_rows_stamp(len(rows)))
     writer = csv.DictWriter(buffer, fieldnames=list(HEADER), extrasaction="ignore")
     writer.writeheader()
     for row in rows:
@@ -464,6 +486,7 @@ def write_lines(rows: list[dict[str, str]], path: Path) -> None:
     """Write the average series; blank cells stay blank so the chart skips that stretch."""
     path.parent.mkdir(parents=True, exist_ok=True)
     buffer = io.StringIO(newline="")
+    buffer.write(_rows_stamp(len(rows)))
     writer = csv.DictWriter(buffer, fieldnames=list(LINES_HEADER), extrasaction="ignore")
     writer.writeheader()
     for row in rows:
@@ -475,6 +498,7 @@ def write_context(rows: list[tuple[str, str]], path: Path) -> None:
     """Write the panel as `key,value`: read by eye, and looked up by key in MQL5."""
     path.parent.mkdir(parents=True, exist_ok=True)
     buffer = io.StringIO(newline="")
+    buffer.write(_rows_stamp(len(rows)))
     writer = csv.writer(buffer)
     writer.writerow(["key", "value"])
     for key, value in rows:

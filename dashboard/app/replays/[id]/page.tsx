@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Info, PanelHead } from "@/components/info";
 import { ReplayCardsTable, ReplayFamiliesTable } from "@/components/replay-view";
+import { ContextNav, WorkspaceFrame, researchNavItems } from "@/components/shell/context-nav";
 import { ReplayManual } from "@/components/strategy-guide";
 import { formatStamp, getReplay } from "@/lib/replays";
 
@@ -34,7 +35,7 @@ export default async function ReplayRunPage({ params }: { params: Promise<{ id: 
   const net = run.results.reduce((acc, r) => acc + (r.netSumR ?? 0), 0);
 
   return (
-    <>
+    <WorkspaceFrame nav={<ContextNav heading="Research workspace" items={researchNavItems("/replays")} />}>
       <header className="page-head">
         <p className="muted">
           <Link href="/replays">All replays</Link> &middot; run {run.id}
@@ -107,6 +108,6 @@ export default async function ReplayRunPage({ params }: { params: Promise<{ id: 
         }
       />
       <ReplayCardsTable run={run} />
-    </>
+    </WorkspaceFrame>
   );
 }

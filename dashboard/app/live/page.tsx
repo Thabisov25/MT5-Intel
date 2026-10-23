@@ -1,8 +1,8 @@
 import { AutoPanel } from "@/components/auto-panel";
 import { ForecastPanel } from "@/components/forecast-panel";
+import { ContextNav, WorkspaceFrame, tradingNavItems } from "@/components/shell/context-nav";
 import { SymbolFilter } from "@/components/symbol-filter";
 import { TimeframeFilter } from "@/components/timeframe-filter";
-import { PageHead } from "@/components/info";
 import { LiveFeedProvider } from "@/components/live-feed";
 import { LivePoller } from "@/components/live-poller";
 import { SetupsPanel } from "@/components/setups-panel";
@@ -18,9 +18,16 @@ import { filterTradesBySymbol } from "@/lib/trades";
 export const instant = false;
 
 export const metadata = {
-  title: "MT5 intel · live watcher",
+  title: "MT5 intel · live decisions",
 };
 
+/**
+ * The trading intelligence workspace (master plan §11.1): a left context column
+ * carrying the market and frame pickers and the watcher's own state, the decision
+ * surface in the centre, and the ranked forecast on a right rail. Selection flows
+ * through the URL (`?symbol=`, `?tf=`) so deep links keep working. The auto-trading
+ * machinery stays folded below the daily view — arming is deliberate.
+ */
 export default async function LivePage({
   searchParams,
 }: {
@@ -51,28 +58,8 @@ export default async function LivePage({
   const forecastSetups = timeframe === "H1" ? setups : await readSetups(symbol, "H1");
 
   return (
-    <>
-      <PageHead
-        title="Live"
-        about={
-          <p>
-            One card for the entry decision, then every rule&rsquo;s current position. Rebuilt every
-            10 s from the watcher&rsquo;s files; per-strategy scorecards are on{" "}
-            <a href="/trades">Trades</a>.
-          </p>
-        }
-      />
-      {/* The page's own choices of market and frame, beside the information they filter. The
-          market strip is one tab per watched symbol; the frame strip switches which artifact the
-          card view reads, with H1 first and the observation frames after it. */}
-      <SymbolFilter
-        basePath="/live"
-        label="Market:"
-        current={symbol ?? ""}
-        symbols={[...watched]}
-      />
-      <TimeframeFilter basePath="/live" current={timeframe} symbol={symbol} />
-      {/* One provider for the blocks below: they read one payload set, fetched on one tick. */}
+    <WorkspaceFrame nav={<ContextNav heading="Trading workspace" items={tradingNavItems("/live")} />}>
+      {/* One provider for the workspace: its panels read one payload set, fetched on one tick. */}
       <LiveFeedProvider
         live={status}
         setups={setups}
@@ -82,15 +69,66 @@ export default async function LivePage({
         forecast={buildForecast(forecastSetups, trades)}
       >
         <LivePoller />
-        <ForecastPanel />
-        <SetupsPanel />
+        <div className="live-grid">
+          {/* Left: the page's own choices of market and frame, beside the state they filter. */}
+          <aside className="panel live-context" aria-label="Market and watcher state">
+            <p className="section-label">Market</p>
+            <SymbolFilter
+              basePath="/live"
+              label="Market:"
+              current={symbol ?? ""}
+              symbols={[...watched]}
+            />
+            <TimeframeFilter basePath="/live" current={timeframe} symbol={symbol} />
+            <p className="section-label">Watcher</p>
+            <dl className="risk-list">
+              <div>
+                <dt>Connection</dt>
+                <dd>
+                  <span className={`pill ${status.connected ? "pill-pass" : "pill-warn"}`}>
+                    {status.available ? (status.connected ? "MT5 linked" : "offline") : "not reporting"}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>Gate verdict</dt>
+                <dd className="num">{status.gateVerdict ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Market</dt>
+                <dd className="num">{status.marketState ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Spread</dt>
+                <dd className="num">
+                  {status.spreadPips != null ? `${status.spreadPips.toFixed(1)} pips` : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt>Bar age</dt>
+                <dd className="num">{status.barAgeS != null ? `${status.barAgeS} s` : "—"}</dd>
+              </div>
+            </dl>
+          </aside>
+
+          {/* Centre: the decision surface - every rule's current position. */}
+          <div aria-label="Decision surface">
+            <SetupsPanel />
+          </div>
+
+          {/* Right: the ranked forecast, kept out of the decision surface's way. */}
+          <aside aria-label="Strategy forecast">
+            <ForecastPanel />
+          </aside>
+        </div>
+
         {/* The machinery of auto-trading matters only while configuring or auditing it, so it is
             kept out of the daily view until asked for. */}
-        <details className="panel auto-fold">
+        <details className="panel auto-fold" style={{ marginTop: "1rem" }}>
           <summary>Auto-trading</summary>
           <AutoPanel />
         </details>
       </LiveFeedProvider>
-    </>
+    </WorkspaceFrame>
   );
 }

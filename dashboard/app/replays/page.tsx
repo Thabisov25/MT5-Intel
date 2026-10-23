@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { PageHead } from "@/components/info";
+import { ContextNav, WorkspaceFrame, researchNavItems } from "@/components/shell/context-nav";
 import { ReplayRunBlock } from "@/components/replay-view";
 import { ReplayManual } from "@/components/strategy-guide";
 import { listReplays } from "@/lib/replays";
@@ -13,7 +14,7 @@ export const metadata = {
 
 export default function ReplaysPage() {
   return (
-    <>
+    <WorkspaceFrame nav={<ContextNav heading="Research workspace" items={researchNavItems("/replays")} />}>
       <PageHead title="Replays" about={<ReplayManual />} />
       <Suspense fallback={<p className="muted" role="status">Reading replays…</p>}>
         <ReplaysList />
@@ -26,7 +27,7 @@ export default function ReplaysPage() {
         </code>{" "}
         &middot; the live per-strategy cards are on the <Link href="/live">Live</Link> tab.
       </p>
-    </>
+    </WorkspaceFrame>
   );
 }
 

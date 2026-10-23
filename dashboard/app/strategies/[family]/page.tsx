@@ -1,10 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PageHead } from "@/components/info";
+import { ContextNav, WorkspaceFrame, researchNavItems } from "@/components/shell/context-nav";
+import { ReplayPanel } from "@/components/replay-panel";
 import { StrategySettingsForm } from "@/components/strategy-settings-form";
+import { SymbolFilter } from "@/components/symbol-filter";
 import type { AutoRegistryRow } from "@/lib/auto";
 import { readAuto, readSelection } from "@/lib/auto";
+import { isReplayFamily } from "@/lib/replay";
+import { normalizeSymbolParam } from "@/lib/symbols";
 import { strategyInfo } from "@/lib/strategies";
+import { REPLAY_SYMBOLS } from "@/lib/replay-constants";
 
 /**
  * One strategy's own settings page.
@@ -24,10 +30,16 @@ export async function generateMetadata({ params }: { params: Promise<{ family: s
 
 export default async function StrategySettingsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ family: string }>;
+  searchParams: Promise<{ symbol?: string }>;
 }) {
   const { family } = await params;
+  // The market is the URL's, the way the journal's is: a page that says it is about EURUSD is
+  // actually about EURUSD, and the view can be bookmarked or passed on.
+  const chosen = normalizeSymbolParam((await searchParams).symbol);
+  const symbol = chosen && chosen !== "ALL" ? chosen : "USDJPY";
   // The same bound the selection file and the API apply, so a crafted path is refused here rather
   // than read as a strategy name.
   if (!/^[A-Za-z0-9_]{1,40}$/.test(family)) notFound();
@@ -43,7 +55,7 @@ export default async function StrategySettingsPage({
   const info = strategyInfo(family);
   const onList = selection?.strategies.includes(family) ?? false;
   return (
-    <>
+    <WorkspaceFrame nav={<ContextNav heading="Research workspace" items={researchNavItems("/strategies")} />}>
       <PageHead
         title={info.name}
         about={
@@ -54,6 +66,23 @@ export default async function StrategySettingsPage({
           </p>
         }
       />
+      {/* The replay grades this family's rule over the recent window and draws each trade
+          as a box on real bars - the visual half of "how did it actually play out". The
+          composite is not a family and has nothing to replay.
+
+          One rule, one market at a time: the filter is the journal's own, so a page that is
+          about EURUSD says so in its URL and in its chart. */}
+      {isReplayFamily(family) ? (
+        <>
+          <SymbolFilter
+            basePath={`/strategies/${family}`}
+            label="Filter by symbol:"
+            current={symbol}
+            symbols={[...REPLAY_SYMBOLS]}
+          />
+          <ReplayPanel family={family} digits={null} symbol={symbol} />
+        </>
+      ) : null}
       <StrategySettingsForm family={family} registryRow={row} selection={selection} />
       <section className="panel">
         <h2>What the rule does</h2>
@@ -88,6 +117,6 @@ export default async function StrategySettingsPage({
           </div>
         </dl>
       </section>
-    </>
+    </WorkspaceFrame>
   );
 }

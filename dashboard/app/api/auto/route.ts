@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   readAuto,
+  readCaps,
   readSelection,
   readSwitch,
+  writeCaps,
   writeSelection,
   writeSwitch,
   type TpMode,
@@ -11,9 +13,14 @@ import {
 // The watcher rewrites the view every cycle and the switch is written here, so nothing on this
 // route may be served from a cache.
 export async function GET() {
-  const [status, toggle, selection] = await Promise.all([readAuto(), readSwitch(), readSelection()]);
+  const [status, toggle, selection, caps] = await Promise.all([
+    readAuto(),
+    readSwitch(),
+    readSelection(),
+    readCaps(),
+  ]);
   return NextResponse.json(
-    { status, toggle, selection },
+    { status, toggle, selection, caps },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -54,13 +61,43 @@ type Payload =
       confluenceMode: "members" | "fade";
       /** Per-strategy take-profit mode. Absent (the live page's older save shape) means "keep what the file has" rather than "reset to fixed" - a save that silently reset a chosen exit would be a bug with real money behind it. */
       tpMode?: Record<string, TpMode>;
-    };
+    }
+  |
+      // The per-symbol position caps, in the watcher's own shape but named as this page's fields.
+      // `default` is optional: absent means "leave the .env cap standing for unnamed symbols", not
+      // "cap zero everywhere" - that asymmetry is load-bearing and the watcher reads it the same.
+      { kind: "caps"; caps: Record<string, number>; default?: number };
 
 function parse(body: unknown): Payload | { error: string } {
   if (typeof body !== "object" || body === null) return { error: "Expected a JSON object." };
   const data = body as Record<string, unknown>;
   if (typeof data.enabled === "boolean") {
     return { kind: "switch", enabled: data.enabled };
+  }
+  // The caps save comes with a `caps` map rather than a `strategies` array. Same bounds the
+  // watcher applies (0–9, ≤32 symbols, names it could ever read), applied here so the two ends
+  // of the file agree; anything outside is refused, not clamped, so a stray -1 is seen by the
+  // person who typed it rather than silently becoming zero.
+  if (typeof data.caps === "object" && data.caps !== null && !Array.isArray(data.caps)) {
+    const symbols: Record<string, number> = {};
+    for (const [name, value] of Object.entries(data.caps as Record<string, unknown>)) {
+      const key = name.trim().toUpperCase();
+      if (!/^[A-Z0-9]{1,24}$/.test(key) || !Number.isInteger(value) || (value as number) < 0 || (value as number) > 9) {
+        return { error: `"${name}" is not a cap this watcher would accept (0–9).` };
+      }
+      symbols[key] = value as number;
+    }
+    if (Object.keys(symbols).length > 32) {
+      return { error: "At most 32 symbols can carry a cap." };
+    }
+    let def: number | undefined;
+    if (data.default !== undefined && data.default !== null) {
+      if (typeof data.default !== "number" || !Number.isInteger(data.default) || data.default < 0 || data.default > 9) {
+        return { error: "The default cap must be a whole number from 0 to 9." };
+      }
+      def = data.default;
+    }
+    return { kind: "caps", caps: symbols, default: def };
   }
   if (!Array.isArray(data.strategies)) {
     return { error: "Send { enabled: boolean } or { strategies: string[] }." };
@@ -124,7 +161,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 
-  if (parsed.kind === "selection") {
+  if (parsed.kind === "caps") {
+    await writeCaps(parsed.caps, parsed.default);
+  } else if (parsed.kind === "selection") {
     const status = await readAuto();
     const known = new Set((status.registry ?? []).map((row) => row.family));
     if (known.size > 0) {
@@ -149,6 +188,11 @@ export async function POST(request: Request) {
     await writeSwitch(parsed.enabled);
   }
 
-  const [status, toggle, selection] = await Promise.all([readAuto(), readSwitch(), readSelection()]);
-  return NextResponse.json({ status, toggle, selection }, { headers: { "Cache-Control": "no-store" } });
+  const [status, toggle, selection, caps] = await Promise.all([
+    readAuto(),
+    readSwitch(),
+    readSelection(),
+    readCaps(),
+  ]);
+  return NextResponse.json({ status, toggle, selection, caps }, { headers: { "Cache-Control": "no-store" } });
 }

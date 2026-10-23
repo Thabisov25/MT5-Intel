@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import TextIO
 
 from mt5_intel.config import load_settings
 from mt5_intel.mt5_adapter import ReadOnlyMT5
@@ -12,6 +13,20 @@ from mt5_intel.research import export_mt5, setups
 from mt5_intel.research.backtest import load_bars, resolve_offset_s
 
 TF = "H1"
+
+
+def _read_stamp(handle: TextIO) -> int | None:
+    """Step over the writer's `#rows,n,n` completeness stamp; return the count it claims.
+
+    None for a file written before the stamp existed. A file whose rows do not match its claim
+    is a truncation caught mid-rewrite - what the chart used to draw as the truth - so this
+    check is where that failure is named.
+    """
+    first = handle.readline()
+    if not first.startswith("#rows,"):
+        handle.seek(0)
+        return None
+    return int(first.strip().split(",")[1])
 
 
 def main() -> int:
@@ -35,13 +50,21 @@ def main() -> int:
             utc_offset_s=resolve_offset_s(mt5, settings, settings.symbol_root),
         )
         assert bars is not None
-        folder = Path(mt5.terminal_data_path()) / "MQL5" / "Files"
+        data_path = mt5.terminal_data_path()
+        assert data_path is not None, "the terminal must report its data path for this check"
+        folder = Path(data_path) / "MQL5" / "Files"
 
-        with (folder / export_mt5.lines_filename(TF)).open(encoding="utf-8", newline="") as handle:
-            lines = list(csv.DictReader(handle))
-        with (folder / export_mt5.context_filename(TF)).open(
+        with (folder / export_mt5.lines_filename(TF, settings.symbol_root)).open(
             encoding="utf-8", newline=""
         ) as handle:
+            lines_claim = _read_stamp(handle)
+            lines = list(csv.DictReader(handle))
+        if lines_claim is not None and lines_claim != len(lines):
+            failures.append(f"lines file claims {lines_claim} rows but holds {len(lines)}")
+        with (folder / export_mt5.context_filename(TF, settings.symbol_root)).open(
+            encoding="utf-8", newline=""
+        ) as handle:
+            _read_stamp(handle)
             ctx = dict(csv.reader(handle))
 
         bar_stamps = {export_mt5._stamp(int(t)) for t in bars.time}
@@ -84,8 +107,13 @@ def main() -> int:
 
         # The agreement column the chart paints from: on the real file, it has to be the live
         # cards on that row's bar and side - a count off by a side would paint a disagreement.
-        with (folder / export_mt5.filename(TF)).open(encoding="utf-8", newline="") as handle:
+        with (folder / export_mt5.filename(TF, settings.symbol_root)).open(
+            encoding="utf-8", newline=""
+        ) as handle:
+            trades_claim = _read_stamp(handle)
             trades = list(csv.DictReader(handle))
+        if trades_claim is not None and trades_claim != len(trades):
+            failures.append(f"trades file claims {trades_claim} rows but holds {len(trades)}")
         live = [row for row in trades if row["state"] == "open"]
 
         def live_here(row: dict[str, str]) -> int:
